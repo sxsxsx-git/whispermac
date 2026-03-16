@@ -174,8 +174,10 @@ If these assets exist, the bundle script copies them into the app under
 - `scripts/setup-whispercpp.sh`: build `whisper.cpp`
 - `scripts/prepare-model.sh`: download model assets and prepare Core ML encoder
 - `scripts/build-app-bundle.sh`: package the macOS app bundle
+- `scripts/create-release-assets.sh`: package app-only release artifacts
 - `scripts/benchmark-acceleration.sh`: compare `GPU only` vs `GPU + ANE`
 - `.github/workflows/swift.yml`: basic GitHub Actions CI
+- `.github/workflows/release.yml`: build and upload app-only release assets
 
 ## Project Status
 

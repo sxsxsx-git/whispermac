@@ -1,0 +1,52 @@
+name: Release Assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to upload assets to, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: macos-14
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "RELEASE_TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install dependencies
+        run: brew install cmake
+
+      - name: Build whisper.cpp runtime
+        run: ./scripts/setup-whispercpp.sh
+
+      - name: Build app bundle
+        run: ./scripts/build-app-bundle.sh
+
+      - name: Create release assets
+        run: ./scripts/create-release-assets.sh "$RELEASE_TAG"
+
+      - name: Upload release assets
+        run: gh release upload "$RELEASE_TAG" dist/release-assets/*.zip dist/release-assets/*.sha256 --clobber --repo "${{ github.repository }}"
