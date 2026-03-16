@@ -21,6 +21,12 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$RUNTIME_DIR/bin" "$RUNTIME_DIR/Models"
 cp "$BIN_PATH" "$MACOS_DIR/WhisperMac"
 chmod +x "$MACOS_DIR/WhisperMac"
 
+shopt -s nullglob
+for RESOURCE_BUNDLE in "$BIN_DIR"/*.bundle; do
+  rsync -a "$RESOURCE_BUNDLE" "$RESOURCES_DIR/"
+done
+shopt -u nullglob
+
 if [ -f "$ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" ]; then
   cp "$ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" "$RUNTIME_DIR/bin/"
 fi
@@ -51,7 +57,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
-  <string>zh_CN</string>
+  <string>en</string>
   <key>CFBundleExecutable</key>
   <string>WhisperMac</string>
   <key>CFBundleIdentifier</key>
@@ -60,6 +66,12 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>6.0</string>
   <key>CFBundleName</key>
   <string>WhisperMac</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+    <string>ja</string>
+  </array>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

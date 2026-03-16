@@ -8,9 +8,9 @@ enum RuntimeModelResolverError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingModel(let path):
-            return "模型文件不存在: \(path)"
+            return L.tr("error.model_missing", path)
         case .failedToCreateGPUOnlyLink(let path):
-            return "创建纯 GPU 运行模型失败: \(path)"
+            return L.tr("error.failed_gpu_link", path)
         }
     }
 }
@@ -42,17 +42,17 @@ enum RuntimeModelResolver {
         switch requestedMode {
         case .gpuAndANE:
             if hasCoreML {
-                notes.append("检测到 Core ML encoder，将启用 GPU + ANE 路径。")
+                notes.append(L.tr("resolver.note.detected_coreml"))
             } else {
                 effectiveMode = .pureGPU
-                notes.append("未找到 Core ML encoder，已回退为纯 GPU 模式。")
+                notes.append(L.tr("resolver.note.fallback_pure_gpu"))
             }
         case .pureGPU:
             if hasCoreML {
                 executionPath = try prepareGPUOnlyModelLink(for: originalURL)
-                notes.append("已为纯 GPU 模式创建无 Core ML companion 的运行时模型路径。")
+                notes.append(L.tr("resolver.note.gpu_only_runtime_link"))
             } else {
-                notes.append("当前模型本身没有 Core ML encoder，将直接按纯 GPU 运行。")
+                notes.append(L.tr("resolver.note.no_coreml_pure_gpu"))
             }
         }
 

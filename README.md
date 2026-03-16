@@ -27,6 +27,22 @@ It is designed for Apple Silicon and supports two acceleration modes:
 - Filtered runtime logs for user status and debugging
 - Runtime acceleration mode switch between `GPU only` and `GPU + ANE`
 - Built to take advantage of Metal GPU acceleration and Core ML / ANE offload
+- Localized UI with English, Simplified Chinese, and Japanese support
+
+## Performance Snapshot
+
+On a single `47m 09s` sample file, using the same preprocessed WAV input and a
+`120s` cooldown between runs on a passively cooled Apple Silicon MacBook Air,
+the measured results were:
+
+- `GPU + ANE`: `177.62s`
+- `GPU only`: `205.22s`
+
+In that test, `GPU + ANE` was about `15.5%` faster than `GPU only`.
+
+This is a single-machine, single-sample benchmark. Actual speedups will vary
+depending on model, media content, thermals, and current `whisper.cpp`
+behavior.
 
 ## Model Naming
 

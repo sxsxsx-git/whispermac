@@ -19,29 +19,29 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("WhisperMac")
                 .font(.system(size: 30, weight: .bold))
-            Text("把 MP4 / M4A 转成 TXT / SRT，默认对接 `large-v3-turbo`，Whisper.cpp 用 Metal 跑 GPU，检测到 Core ML encoder 时自动启用 ANE。")
+            Text(L.tr("app.subtitle"))
                 .foregroundStyle(.secondary)
         }
     }
 
     private var fileSection: some View {
-        GroupBox("输入文件") {
+        GroupBox(L.tr("section.input_files")) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Button("添加 MP4 / M4A") {
+                    Button(L.tr("button.add_media")) {
                         model.chooseInputFiles()
                     }
-                    Button("清空列表") {
+                    Button(L.tr("button.clear_list")) {
                         model.clearInputFiles()
                     }
                     .disabled(model.inputFiles.isEmpty || model.isRunning)
                     Spacer()
-                    Text("\(model.inputFiles.count) 个文件")
+                    Text(L.tr("label.file_count", model.inputFiles.count))
                         .foregroundStyle(.secondary)
                 }
 
                 if model.inputFiles.isEmpty {
-                    Text("还没有选择文件。")
+                    Text(L.tr("message.no_files_selected"))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
@@ -55,7 +55,7 @@ struct ContentView: View {
                                     .lineLimit(1)
                             }
                             Spacer()
-                            Button("移除") {
+                            Button(L.tr("button.remove")) {
                                 model.removeInputFile(url)
                             }
                             .buttonStyle(.borderless)
@@ -70,14 +70,14 @@ struct ContentView: View {
     }
 
     private var outputSection: some View {
-        GroupBox("输出") {
+        GroupBox(L.tr("section.output")) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("输出目录")
+                    Text(L.tr("label.output_directory"))
                         .frame(width: 90, alignment: .leading)
-                    TextField("留空时跟随输入文件目录", text: $model.outputDirectoryPath)
+                    TextField(L.tr("placeholder.output_directory"), text: $model.outputDirectoryPath)
                         .textFieldStyle(.roundedBorder)
-                    Button("选择…") {
+                    Button(L.tr("button.choose")) {
                         model.chooseOutputDirectory()
                     }
                     .disabled(model.isRunning)
@@ -88,10 +88,10 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 20) {
-                    Toggle("导出 TXT", isOn: outputBinding(for: .txt))
-                    Toggle("导出 SRT", isOn: outputBinding(for: .srt))
+                    Toggle(L.tr("toggle.export_txt"), isOn: outputBinding(for: .txt))
+                    Toggle(L.tr("toggle.export_srt"), isOn: outputBinding(for: .srt))
                     Spacer()
-                    Button("打开输出目录") {
+                    Button(L.tr("button.open_output_directory")) {
                         model.openOutputDirectory()
                     }
                     .disabled(model.inputFiles.isEmpty && model.outputDirectoryPath.isEmpty)
@@ -101,11 +101,11 @@ struct ContentView: View {
     }
 
     private var toolSection: some View {
-        GroupBox("运行环境") {
+        GroupBox(L.tr("section.runtime")) {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("加速模式")
-                    Picker("加速模式", selection: $model.accelerationMode) {
+                    Text(L.tr("label.acceleration_mode"))
+                    Picker(L.tr("label.acceleration_mode"), selection: $model.accelerationMode) {
                         ForEach(AccelerationMode.allCases, id: \.self) { mode in
                             Text(mode.title).tag(mode)
                         }
@@ -119,14 +119,14 @@ struct ContentView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                toolPathRow(title: "whisper-cli", text: $model.whisperCLIPath) {
+                toolPathRow(title: L.tr("field.whisper_cli"), text: $model.whisperCLIPath) {
                     model.chooseWhisperCLI()
                 }
-                toolPathRow(title: "模型文件", text: $model.modelPath) {
+                toolPathRow(title: L.tr("field.model_file"), text: $model.modelPath) {
                     model.chooseModel()
                 }
 
-                Text("音频预处理使用系统自带的 afconvert，不需要额外安装 ffmpeg。")
+                Text(L.tr("hint.audio_preprocessor"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -142,7 +142,7 @@ struct ContentView: View {
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 14) {
-                Button(model.isRunning ? "转写中…" : "开始转写") {
+                Button(model.isRunning ? L.tr("button.transcribing") : L.tr("button.start_transcription")) {
                     model.startTranscription()
                 }
                 .buttonStyle(.borderedProminent)
@@ -155,7 +155,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                Button("查看 README") {
+                Button(L.tr("button.view_readme")) {
                     model.openProjectREADME()
                 }
             }
@@ -163,14 +163,14 @@ struct ContentView: View {
             if model.isRunning || model.overallProgress > 0 {
                 VStack(alignment: .leading, spacing: 8) {
                     ProgressView(value: model.overallProgress) {
-                        Text("总进度")
+                        Text(L.tr("label.overall_progress"))
                     } currentValueLabel: {
                         Text("\(Int(model.overallProgress * 100))%")
                             .foregroundStyle(.secondary)
                     }
 
                     ProgressView(value: model.currentFileProgress) {
-                        Text(model.currentFileName.isEmpty ? "当前文件" : model.currentFileName)
+                        Text(model.currentFileName.isEmpty ? L.tr("label.current_file") : model.currentFileName)
                     } currentValueLabel: {
                         Text(model.currentStageDescription.isEmpty ? "\(Int(model.currentFileProgress * 100))%" : model.currentStageDescription)
                             .foregroundStyle(.secondary)
@@ -181,7 +181,7 @@ struct ContentView: View {
     }
 
     private var logSection: some View {
-        GroupBox("日志") {
+        GroupBox(L.tr("section.logs")) {
             ScrollView {
                 Text(model.logsText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -199,7 +199,7 @@ struct ContentView: View {
                 .frame(width: 90, alignment: .leading)
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
-            Button("选择…", action: action)
+            Button(L.tr("button.choose"), action: action)
                 .disabled(model.isRunning)
         }
     }

@@ -27,18 +27,18 @@ enum AccelerationMode: String, CaseIterable, Hashable, Sendable {
     var title: String {
         switch self {
         case .pureGPU:
-            return "纯 GPU"
+            return L.tr("mode.pure_gpu_title")
         case .gpuAndANE:
-            return "GPU + ANE"
+            return L.tr("mode.gpu_ane_title")
         }
     }
 
     var detail: String {
         switch self {
         case .pureGPU:
-            return "禁用 Core ML encoder，Whisper 尽量只走 Metal GPU。"
+            return L.tr("mode.pure_gpu_detail")
         case .gpuAndANE:
-            return "encoder 走 Core ML / ANE，decoder 继续走 Metal GPU。"
+            return L.tr("mode.gpu_ane_detail")
         }
     }
 }
@@ -65,13 +65,13 @@ enum TranscriptionStage: String, Sendable {
     var description: String {
         switch self {
         case .preparing:
-            return "准备中"
+            return L.tr("stage.preparing")
         case .extractingAudio:
-            return "提取音频"
+            return L.tr("stage.extracting_audio")
         case .transcribing:
-            return "Whisper 转写"
+            return L.tr("stage.transcribing")
         case .finished:
-            return "已完成"
+            return L.tr("stage.finished")
         }
     }
 }

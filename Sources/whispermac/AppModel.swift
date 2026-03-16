@@ -49,9 +49,9 @@ final class AppModel: ObservableObject {
         outputFormats = selectedFormats
 
         logs = [
-            "默认模型已设为 large-v3-turbo。",
-            "音频预处理已切换为 macOS 自带的 afconvert，不再依赖第三方 ffmpeg。",
-            "如果同目录存在 large-v3-turbo-encoder.mlmodelc，whisper.cpp 会自动切到 Core ML encoder。",
+            L.tr("log.default_model"),
+            L.tr("log.audio_preprocessor_switched"),
+            L.tr("log.coreml_auto"),
         ]
     }
 
@@ -73,9 +73,9 @@ final class AppModel: ObservableObject {
             return trimmed
         }
         if let firstInput = inputFiles.first {
-            return "\(firstInput.deletingLastPathComponent().path) (跟随输入文件)"
+            return L.tr("display.follow_input_dir", firstInput.deletingLastPathComponent().path)
         }
-        return "默认跟随输入文件目录"
+        return L.tr("display.follow_input_default")
     }
 
     var configurationLooksReady: Bool {
@@ -90,26 +90,26 @@ final class AppModel: ObservableObject {
         let hasCoreML = FileManager.default.fileExists(atPath: coreMLURL.path)
 
         if !hasModel {
-            return "模型文件还不存在。先运行 `scripts/prepare-model.sh`，或者手动选择 `ggml-large-v3-turbo.bin`。"
+            return L.tr("summary.model_missing")
         }
         if accelerationMode == .gpuAndANE && hasCoreML {
-            return "当前模式是 GPU + ANE：encoder 会走 Core ML / ANE，decoder 继续走 Metal GPU。"
+            return L.tr("summary.mode_gpu_ane")
         }
         if accelerationMode == .gpuAndANE && !hasCoreML {
-            return "你选择了 GPU + ANE，但还没找到 Core ML encoder；运行时会自动回退为纯 GPU。"
+            return L.tr("summary.mode_gpu_ane_fallback")
         }
         if hasCoreML {
-            return "当前模式是纯 GPU：Core ML encoder 已存在，但运行时会被显式绕开。"
+            return L.tr("summary.mode_pure_gpu_coreml_present")
         }
-        return "当前模式是纯 GPU：Whisper 只会使用 Metal GPU 路径。"
+        return L.tr("summary.mode_pure_gpu")
     }
 
     var accelerationDetail: String {
         switch accelerationMode {
         case .pureGPU:
-            return "适合验证纯 Metal 路径。CPU 仍会参与音频预处理、mel 特征、调度和文本解码。"
+            return L.tr("detail.pure_gpu")
         case .gpuAndANE:
-            return "这是 Apple Silicon 上当前更完整的 offload 方式，但 decoder 和部分前后处理仍会留在 CPU / GPU。"
+            return L.tr("detail.gpu_ane")
         }
     }
 
@@ -216,7 +216,7 @@ final class AppModel: ObservableObject {
     private func runTranscription(_ snapshot: AppConfigurationSnapshot) async {
         isRunning = true
         logs.removeAll()
-        statusText = "准备开始…"
+        statusText = L.tr("status.preparing_start")
         overallProgress = 0
         currentFileProgress = 0
         currentFileName = ""
@@ -235,34 +235,34 @@ final class AppModel: ObservableObject {
             )
         } catch {
             appendLog(error.localizedDescription)
-            statusText = "准备失败"
+            statusText = L.tr("status.prepare_failed")
             isRunning = false
             return
         }
 
-        appendLog("准备开始，共 \(snapshot.inputFiles.count) 个文件。")
-        appendLog("请求加速模式: \(snapshot.accelerationMode.title)")
-        appendLog("实际加速模式: \(modelPlan.effectiveMode.title)")
-        appendLog("模型路径: \(modelPlan.originalModelPath)")
+        appendLog(L.tr("log.start_files", snapshot.inputFiles.count))
+        appendLog(L.tr("log.requested_mode", snapshot.accelerationMode.title))
+        appendLog(L.tr("log.effective_mode", modelPlan.effectiveMode.title))
+        appendLog(L.tr("log.model_path", modelPlan.originalModelPath))
         if modelPlan.executionModelPath != modelPlan.originalModelPath {
-            appendLog("运行时模型路径: \(modelPlan.executionModelPath)")
+            appendLog(L.tr("log.runtime_model_path", modelPlan.executionModelPath))
         }
-        appendLog("Core ML encoder: \(modelPlan.coreMLAvailable ? modelPlan.coreMLModelPath : "未找到")")
+        appendLog(L.tr("log.coreml_encoder", modelPlan.coreMLAvailable ? modelPlan.coreMLModelPath : L.tr("log.not_found")))
         for note in modelPlan.notes {
             appendLog(note)
         }
         if snapshot.outputDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            appendLog("输出目录: 跟随每个输入文件所在目录")
+            appendLog(L.tr("log.output_directory_follow"))
         } else {
-            appendLog("输出目录: \(PathResolver.expandingTilde(snapshot.outputDirectoryPath))")
+            appendLog(L.tr("log.output_directory", PathResolver.expandingTilde(snapshot.outputDirectoryPath)))
         }
-        appendLog("输出格式: \(snapshot.outputFormats.map(\.rawValue).sorted().joined(separator: ", "))")
+        appendLog(L.tr("log.output_formats", snapshot.outputFormats.map(\.rawValue).sorted().joined(separator: ", ")))
 
         for (index, inputURL) in snapshot.inputFiles.enumerated() {
-            statusText = "处理中 \(index + 1)/\(snapshot.inputFiles.count)"
+            statusText = L.tr("status.processing", index + 1, snapshot.inputFiles.count)
             currentFileName = inputURL.lastPathComponent
             currentFileProgress = 0
-            currentStageDescription = "准备中"
+            currentStageDescription = TranscriptionStage.preparing.description
             currentTranscriptionProgress = 0
             let resolvedOutputDirectory = URL(fileURLWithPath: resolvedOutputDirectoryPath(for: inputURL, overridePath: snapshot.outputDirectoryPath))
 
@@ -278,18 +278,18 @@ final class AppModel: ObservableObject {
                             guard let self else { return }
                             switch stage {
                             case .preparing:
-                                self.currentStageDescription = "准备中"
+                                self.currentStageDescription = stage.description
                                 self.currentFileProgress = 0.03
                             case .extractingAudio:
-                                self.currentStageDescription = "提取音频"
+                                self.currentStageDescription = stage.description
                                 self.currentFileProgress = max(self.currentFileProgress, 0.12)
                             case .transcribing:
                                 self.currentStageDescription = self.currentTranscriptionProgress > 0
-                                    ? "Whisper 转写 \(Int(self.currentTranscriptionProgress * 100))%"
-                                    : "Whisper 转写"
+                                    ? L.tr("stage.transcribing_progress", Int(self.currentTranscriptionProgress * 100))
+                                    : stage.description
                                 self.currentFileProgress = max(self.currentFileProgress, 0.18)
                             case .finished:
-                                self.currentStageDescription = "已完成"
+                                self.currentStageDescription = stage.description
                                 self.currentTranscriptionProgress = 1
                                 self.currentFileProgress = 1
                             }
@@ -307,7 +307,7 @@ final class AppModel: ObservableObject {
                         await MainActor.run {
                             guard let self else { return }
                             self.currentTranscriptionProgress = progress
-                            self.currentStageDescription = "Whisper 转写 \(Int(progress * 100))%"
+                            self.currentStageDescription = L.tr("stage.transcribing_progress", Int(progress * 100))
                             self.currentFileProgress = max(0.18, 0.18 + 0.82 * progress)
                             let completedFiles = Double(index)
                             let totalFiles = Double(snapshot.inputFiles.count)
@@ -317,13 +317,13 @@ final class AppModel: ObservableObject {
                 )
 
                 successCount += 1
-                appendLog("完成: \(inputURL.lastPathComponent)")
-                appendLog("输出目录: \(resolvedOutputDirectory.path)")
-                appendLog("音频预处理: \(report.audioPreparationCommand)")
-                appendLog("whisper-cli: \(report.whisperCommand)")
+                appendLog(L.tr("log.completed_file", inputURL.lastPathComponent))
+                appendLog(L.tr("log.output_directory", resolvedOutputDirectory.path))
+                appendLog(L.tr("log.audio_preparation_command", report.audioPreparationCommand))
+                appendLog(L.tr("log.whisper_command", report.whisperCommand))
 
                 if !report.outputFiles.isEmpty {
-                    appendLog("生成文件:")
+                    appendLog(L.tr("log.generated_files"))
                     for outputFile in report.outputFiles {
                         appendLog("  \(outputFile.path)")
                     }
@@ -331,8 +331,8 @@ final class AppModel: ObservableObject {
             } catch {
                 failureCount += 1
                 currentFileProgress = 1
-                currentStageDescription = "失败"
-                appendLog("失败: \(inputURL.lastPathComponent)")
+                currentStageDescription = L.tr("stage.failed")
+                appendLog(L.tr("log.failed_file", inputURL.lastPathComponent))
                 appendLog(error.localizedDescription)
             }
 
@@ -340,8 +340,8 @@ final class AppModel: ObservableObject {
             appendLog(String(repeating: "-", count: 72))
         }
 
-        statusText = "完成：成功 \(successCount)，失败 \(failureCount)"
-        currentStageDescription = failureCount == 0 ? "全部完成" : "处理结束"
+        statusText = L.tr("log.completed_summary", successCount, failureCount)
+        currentStageDescription = failureCount == 0 ? L.tr("stage.all_done") : L.tr("stage.processing_finished")
         currentFileProgress = snapshot.inputFiles.isEmpty ? 0 : 1
         overallProgress = snapshot.inputFiles.isEmpty ? 0 : 1
         isRunning = false

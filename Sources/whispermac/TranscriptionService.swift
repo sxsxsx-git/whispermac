@@ -15,8 +15,8 @@ struct TranscriptionService {
     ) async throws -> TranscriptionReport {
         let startedAt = Date()
         await onStageChange(.preparing)
-        await onLog("准备处理文件: \(inputURL.path)")
-        await onLog("输出目录: \(outputDirectory.path)")
+        await onLog(L.tr("transcription.prepare_file", inputURL.path))
+        await onLog(L.tr("transcription.output_directory", outputDirectory.path))
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true, attributes: nil)
 
         let wavURL = OutputPaths.temporaryWAVURL(for: inputURL)
@@ -33,7 +33,7 @@ struct TranscriptionService {
         ]
 
         await onStageChange(.extractingAudio)
-        await onLog("开始提取音频（afconvert）...")
+        await onLog(L.tr("transcription.start_audio_prep"))
         let audioPreparationStartedAt = Date()
         let audioPreparationResult = try await ShellCommand.run(
             executable: audioPreprocessorPath,
@@ -45,7 +45,7 @@ struct TranscriptionService {
                 await onLog("[afconvert \(stream.label)] \(filtered)")
             }
         )
-        await onLog("afconvert 完成，耗时 \(formatDuration(Date().timeIntervalSince(audioPreparationStartedAt)))")
+        await onLog(L.tr("transcription.audio_prep_finished", Date().timeIntervalSince(audioPreparationStartedAt)))
 
         let outputPrefix = OutputPaths.outputPrefixURL(for: inputURL, outputDirectory: outputDirectory)
         var whisperArguments = [
@@ -58,7 +58,7 @@ struct TranscriptionService {
         whisperArguments.append(contentsOf: formats.sorted { $0.rawValue < $1.rawValue }.map(\.whisperArgument))
 
         await onStageChange(.transcribing)
-        await onLog("开始 Whisper 转写...")
+        await onLog(L.tr("transcription.start_whisper"))
         let whisperStartedAt = Date()
         let whisperResult = try await ShellCommand.run(
             executable: whisperCLIPath,
@@ -73,11 +73,11 @@ struct TranscriptionService {
                 }
             }
         )
-        await onLog("whisper-cli 完成，耗时 \(formatDuration(Date().timeIntervalSince(whisperStartedAt)))")
+        await onLog(L.tr("transcription.whisper_finished", Date().timeIntervalSince(whisperStartedAt)))
         await onStageChange(.finished)
 
         let outputFiles = OutputPaths.outputFiles(for: inputURL, outputDirectory: outputDirectory, formats: formats)
-        await onLog("文件总耗时 \(formatDuration(Date().timeIntervalSince(startedAt)))")
+        await onLog(L.tr("transcription.file_total_time", Date().timeIntervalSince(startedAt)))
 
         return TranscriptionReport(
             audioPreparationCommand: audioPreparationResult.command,
@@ -102,9 +102,5 @@ struct TranscriptionService {
         }
 
         return min(max(percent / 100.0, 0), 1)
-    }
-
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        String(format: "%.1fs", duration)
     }
 }

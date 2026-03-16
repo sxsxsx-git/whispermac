@@ -22,12 +22,12 @@ enum ShellCommandError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingExecutable(let name):
-            return "找不到可执行文件: \(name)"
+            return L.tr("error.missing_executable", name)
         case .failedToStart(let command):
-            return "命令启动失败: \(command)"
+            return L.tr("error.failed_to_start", command)
         case .nonZeroExit(let command, let code, let stderr):
-            let detail = stderr.isEmpty ? "无错误输出" : stderr
-            return "命令执行失败(\(code)): \(command)\n\(detail)"
+            let detail = stderr.isEmpty ? L.tr("error.no_error_output") : stderr
+            return L.tr("error.non_zero_exit", code, command, detail)
         }
     }
 }

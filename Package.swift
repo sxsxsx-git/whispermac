@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "whispermac",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14),
     ],
@@ -12,7 +13,10 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "whispermac"
+            name: "whispermac",
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .testTarget(
             name: "whispermacTests",
