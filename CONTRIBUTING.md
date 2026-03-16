@@ -13,7 +13,7 @@ sudo xcode-select -s /Applications/Xcode.app
 2. Install build dependencies:
 
 ```bash
-brew install cmake
+brew install cmake python@3.11
 ```
 
 3. Prepare runtime assets:
@@ -29,6 +29,12 @@ brew install cmake
 swift build
 swift test
 ```
+
+Notes:
+
+- `afconvert` is provided by macOS and is used for audio preprocessing.
+- `python3.11` is recommended for Core ML model preparation in
+  `scripts/prepare-model.sh`.
 
 To build the app bundle:
 

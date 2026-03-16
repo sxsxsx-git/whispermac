@@ -28,6 +28,19 @@ It is designed for Apple Silicon and supports two acceleration modes:
 - Runtime acceleration mode switch between `GPU only` and `GPU + ANE`
 - Built to take advantage of Metal GPU acceleration and Core ML / ANE offload
 
+## Model Naming
+
+WhisperMac uses OpenAI Whisper's `large-v3-turbo` model family.
+
+In this repository and in `whisper.cpp`, you will typically see these artifact
+names:
+
+- `ggml-large-v3-turbo.bin`
+- `ggml-large-v3-turbo-encoder.mlmodelc`
+
+That is expected. The model name is still `large-v3-turbo`; the `ggml-` prefix
+comes from the `whisper.cpp` model file format and packaging convention.
+
 ## Positioning
 
 WhisperMac is intended to be:
@@ -61,8 +74,34 @@ other parts still use GPU and CPU resources.
 - Apple Silicon Mac
 - Full Xcode installation
 - `cmake`
+- Python 3.11 recommended for Core ML model preparation
 
-Install the build dependency:
+## Dependency Installation
+
+For a full local development and packaging setup, install:
+
+- Xcode
+- Command Line Tools selected via `xcode-select`
+- Homebrew
+- `cmake`
+- Python 3.11
+
+Recommended setup:
+
+```bash
+xcode-select -s /Applications/Xcode.app
+brew install cmake python@3.11
+```
+
+Notes:
+
+- `afconvert` is provided by macOS, so no FFmpeg installation is required.
+- `git` is typically already available on macOS once Command Line Tools are
+  installed.
+- `python3.11` is mainly needed for `scripts/prepare-model.sh` when generating
+  the optional Core ML encoder for `GPU + ANE`.
+
+Minimum dependency for building the app itself:
 
 ```bash
 brew install cmake
@@ -76,6 +115,12 @@ Prepare the runtime:
 ./scripts/setup-whispercpp.sh
 ./scripts/prepare-model.sh
 ```
+
+What these scripts do:
+
+- `scripts/setup-whispercpp.sh` clones and builds `whisper.cpp`
+- `scripts/prepare-model.sh` downloads `large-v3-turbo` and optionally builds
+  the Core ML encoder companion
 
 Run the app in development:
 
