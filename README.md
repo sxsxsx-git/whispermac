@@ -1,33 +1,51 @@
 # WhisperMac
 
-> Free, local-first transcription for Apple Silicon, built to make practical
-> use of Metal GPU and ANE acceleration.
+Free, local-first transcription for Apple Silicon Macs. WhisperMac turns local
+audio and video into `txt` and `srt` with `whisper.cpp`, Metal GPU
+acceleration, and optional Core ML / ANE encoder offload.
 
-WhisperMac is a local macOS transcription app for converting `mp4`, `m4a`, and
-other common audio/video inputs into `txt` and `srt` using `whisper.cpp`.
+If this repo helps you, please star it. That is the clearest signal that the
+project is useful and worth continuing.
 
-The goal is to make it a free, easy-to-use, Apple Silicon-native alternative to
-desktop transcription apps such as Buzz and MacWhisper, with a strong focus on
-practical hardware acceleration.
+## Why WhisperMac
 
-It is designed for Apple Silicon and supports two acceleration modes:
+- Free and open source
+- Local-first: your media stays on your Mac
+- Built for Apple Silicon instead of treating it as an afterthought
+- Native macOS app, not just a terminal wrapper
+- `txt` and `srt` export for practical transcript workflows
+- Clear GPU-only vs `GPU + ANE` runtime behavior
+- Honest about what is accelerated and what is not
 
-- `GPU only`: Metal-only inference
-- `GPU + ANE`: Metal for GPU work plus Core ML encoder offload when a compatible
-  encoder model is available
+## Quick Start for Users
+
+1. Read the [Installation Guide](docs/installation.md).
+2. If a release asset exists, download the latest app-only arm64 zip. If not,
+   build from source.
+3. Make sure you have `ggml-large-v3-turbo.bin`. Add
+   `ggml-large-v3-turbo-encoder.mlmodelc` only if you want `GPU + ANE` mode.
+4. Open WhisperMac, add your media files, pick output formats, and start
+   transcribing.
+
+Important notes before you try it:
+
+- The project currently targets `macOS 14+` on Apple Silicon.
+- Release packaging is currently `app-only`: models are not bundled.
+- Signed and notarized releases are not set up yet.
 
 ## Features
 
-- Free and open-source local transcription workflow
-- Native macOS app built with SwiftUI
-- Batch transcription for local media files
+- Free, open-source local transcription workflow
+- Native SwiftUI macOS app
+- Batch transcription for common local media files
 - `txt` and `srt` export
-- Default model support for `large-v3-turbo`
+- Default workflow centered on `large-v3-turbo`
 - Real-time progress reporting
-- Filtered runtime logs for user status and debugging
-- Runtime acceleration mode switch between `GPU only` and `GPU + ANE`
-- Built to take advantage of Metal GPU acceleration and Core ML / ANE offload
-- Localized UI with English, Simplified Chinese, and Japanese support
+- Filtered logs for both user status and debugging
+- Runtime acceleration switch between `GPU only` and `GPU + ANE`
+- Uses macOS built-in `afconvert` for audio preprocessing, so FFmpeg is not
+  required
+- Localized UI in English, Simplified Chinese, and Japanese
 
 ## Performance Snapshot
 
@@ -38,92 +56,43 @@ the measured results were:
 - `GPU + ANE`: `177.62s`
 - `GPU only`: `205.22s`
 
-In that test, `GPU + ANE` was about `15.5%` faster than `GPU only`.
+In that specific run, `GPU + ANE` was about `15.5%` faster than `GPU only`.
 
-This is a single-machine, single-sample benchmark. Actual speedups will vary
-depending on model, media content, thermals, and current `whisper.cpp`
-behavior.
-
-## Model Naming
-
-WhisperMac uses OpenAI Whisper's `large-v3-turbo` model family.
-
-In this repository and in `whisper.cpp`, you will typically see these artifact
-names:
-
-- `ggml-large-v3-turbo.bin`
-- `ggml-large-v3-turbo-encoder.mlmodelc`
-
-That is expected. The model name is still `large-v3-turbo`; the `ggml-` prefix
-comes from the `whisper.cpp` model file format and packaging convention.
-
-## Positioning
-
-WhisperMac is intended to be:
-
-- Free to use
-- Easy to understand and easy to run locally
-- Optimized for Apple Silicon hardware
-- Transparent about its runtime pipeline and logs
-
-Compared with closed-source desktop transcription tools, the project prioritizes
-hackability, local-first operation, and explicit control over acceleration
-behavior.
+This is not a universal benchmark. Actual speed depends on model choice, media
+content, thermals, and current `whisper.cpp` behavior.
 
 ## How It Works
 
-1. The app normalizes input media to `16 kHz`, mono, PCM WAV using macOS
-   built-in `afconvert`.
-2. It invokes `whisper.cpp` via `whisper-cli`.
+1. WhisperMac converts input media to `16 kHz`, mono, PCM WAV with macOS
+   `afconvert`.
+2. It runs `whisper.cpp` through `whisper-cli`.
 3. On Apple Silicon:
    - `GPU only` uses the Metal backend.
-   - `GPU + ANE` uses Metal plus the Core ML encoder when
+   - `GPU + ANE` uses Metal plus a Core ML encoder when a compatible
      `ggml-large-v3-turbo-encoder.mlmodelc` is available.
 
-Note: ANE does not run the entire pipeline. In the current `whisper.cpp`
-architecture, Core ML typically accelerates the encoder, while decoding and
-other parts still use GPU and CPU resources.
+Important limitation:
 
-## Requirements
+- ANE does not accelerate the full transcription pipeline in the current
+  `whisper.cpp` architecture. The Core ML path typically accelerates the
+  encoder, while decoding and other work still use GPU and CPU resources.
 
-- macOS 14 or later
-- Apple Silicon Mac
-- Full Xcode installation
-- `cmake`
-- Python 3.11 recommended for Core ML model preparation
+## Docs
 
-## Dependency Installation
+- [Installation Guide](docs/installation.md)
+- [FAQ](docs/faq.md)
+- [Positioning and Comparison](docs/positioning.md)
+- [Promotion Pack](docs/promotion-pack.md)
+- [Contributing](CONTRIBUTING.md)
 
-For a full local development and packaging setup, install:
+## Developer Setup
 
-- Xcode
-- Command Line Tools selected via `xcode-select`
-- Homebrew
-- `cmake`
-- Python 3.11
-
-Recommended setup:
+Install the local build dependencies:
 
 ```bash
 xcode-select -s /Applications/Xcode.app
 brew install cmake python@3.11
 ```
-
-Notes:
-
-- `afconvert` is provided by macOS, so no FFmpeg installation is required.
-- `git` is typically already available on macOS once Command Line Tools are
-  installed.
-- `python3.11` is mainly needed for `scripts/prepare-model.sh` when generating
-  the optional Core ML encoder for `GPU + ANE`.
-
-Minimum dependency for building the app itself:
-
-```bash
-brew install cmake
-```
-
-## Quick Start
 
 Prepare the runtime:
 
@@ -131,12 +100,6 @@ Prepare the runtime:
 ./scripts/setup-whispercpp.sh
 ./scripts/prepare-model.sh
 ```
-
-What these scripts do:
-
-- `scripts/setup-whispercpp.sh` clones and builds `whisper.cpp`
-- `scripts/prepare-model.sh` downloads `large-v3-turbo` and optionally builds
-  the Core ML encoder companion
 
 Run the app in development:
 
@@ -167,50 +130,19 @@ Expected default runtime assets:
 If these assets exist, the bundle script copies them into the app under
 `Contents/Resources/runtime`.
 
-## Repository Layout
-
-- `Sources/whispermac`: app source code
-- `Tests/whispermacTests`: test suite
-- `scripts/setup-whispercpp.sh`: build `whisper.cpp`
-- `scripts/prepare-model.sh`: download model assets and prepare Core ML encoder
-- `scripts/build-app-bundle.sh`: package the macOS app bundle
-- `scripts/create-release-assets.sh`: package app-only release artifacts
-- `scripts/benchmark-acceleration.sh`: compare `GPU only` vs `GPU + ANE`
-- `.github/workflows/swift.yml`: basic GitHub Actions CI
-- `.github/workflows/release.yml`: build and upload app-only release assets
-
-## Project Status
-
-Current scope:
-
-- Local transcription to `txt` and `srt`
-- Batch file processing
-- Progress UI
-- Runtime log filtering
-- Acceleration mode selection
-- Packaged `.app` output
-
-Not yet implemented:
-
-- Persistent job queue
-- Timeline preview and editing
-- Built-in model download UI
-- Release signing and notarization
-
 ## Known Limitations
 
-- This project currently targets Apple Silicon Macs and has not been tuned for
-  Intel Macs.
-- `GPU + ANE` acceleration depends on a compatible Core ML encoder model being
-  present next to the selected `ggml` model.
-- ANE does not accelerate the full transcription pipeline; decoding and parts
-  of preprocessing still use CPU and GPU resources.
-- The app currently focuses on batch transcription and export, not subtitle
-  editing or post-processing.
-- The packaged app is suitable for local use and open-source distribution, but
-  it is not yet set up as a signed release artifact.
+- Apple Silicon only. Intel Macs are not a current target.
+- Built-in model download is not implemented yet.
+- `GPU + ANE` depends on a compatible Core ML encoder being present next to the
+  selected `ggml` model.
+- ANE does not accelerate the full transcription pipeline.
+- The app focuses on transcription and export, not subtitle editing.
+- Release artifacts are not yet signed or notarized.
+- The current release packaging flow creates an app-only zip and strips bundled
+  models from the archive.
 
-## Development
+## Contributing and License
 
 Build and test locally:
 
@@ -219,11 +151,11 @@ swift build
 swift test
 ```
 
-Contribution guidelines are in `CONTRIBUTING.md`.
+Contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## License
+License and notices:
 
-- Project license: `MIT`, see `LICENSE`
-- Third-party notices: see `THIRD_PARTY_NOTICES.md`
+- Project license: `MIT`, see [LICENSE](LICENSE)
+- Third-party notices: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 WhisperMac does not bundle or distribute FFmpeg.

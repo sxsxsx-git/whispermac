@@ -4,6 +4,8 @@ import Foundation
 
 @MainActor
 final class AppModel: ObservableObject {
+    private static let repositoryURL = URL(string: "https://github.com/sxsxsx-git/whispermac")!
+
     @Published var inputFiles: [URL]
     @Published var outputDirectoryPath: String {
         didSet { store(outputDirectoryPath, forKey: Keys.outputDirectoryPath) }
@@ -184,6 +186,10 @@ final class AppModel: ObservableObject {
         } ?? PathResolver.projectRoot.appending(path: "README.md")
         guard FileManager.default.fileExists(atPath: readmeURL.path) else { return }
         NSWorkspace.shared.open(readmeURL)
+    }
+
+    func openProjectRepository() {
+        NSWorkspace.shared.open(Self.repositoryURL)
     }
 
     func setFormat(_ format: OutputFormat, enabled: Bool) {

@@ -158,6 +158,10 @@ struct ContentView: View {
                 Button(L.tr("button.view_readme")) {
                     model.openProjectREADME()
                 }
+
+                Button(L.tr("button.star_on_github")) {
+                    model.openProjectRepository()
+                }
             }
 
             if model.isRunning || model.overallProgress > 0 {

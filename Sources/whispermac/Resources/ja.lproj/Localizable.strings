@@ -17,6 +17,7 @@
 "button.start_transcription" = "文字起こし開始";
 "button.transcribing" = "文字起こし中…";
 "button.view_readme" = "README を表示";
+"button.star_on_github" = "GitHub でスター";
 "label.overall_progress" = "全体の進行状況";
 "label.current_file" = "現在のファイル";
 "section.logs" = "ログ";

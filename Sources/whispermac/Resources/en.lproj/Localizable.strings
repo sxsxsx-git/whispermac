@@ -17,6 +17,7 @@
 "button.start_transcription" = "Start Transcription";
 "button.transcribing" = "Transcribing…";
 "button.view_readme" = "View README";
+"button.star_on_github" = "Star on GitHub";
 "label.overall_progress" = "Overall Progress";
 "label.current_file" = "Current File";
 "section.logs" = "Logs";

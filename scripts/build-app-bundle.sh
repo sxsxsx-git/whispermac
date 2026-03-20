@@ -43,6 +43,14 @@ if [ -f "$ROOT/README.md" ]; then
   cp "$ROOT/README.md" "$RESOURCES_DIR/"
 fi
 
+if [ -f "$ROOT/CONTRIBUTING.md" ]; then
+  cp "$ROOT/CONTRIBUTING.md" "$RESOURCES_DIR/"
+fi
+
+if [ -d "$ROOT/docs" ]; then
+  rsync -a "$ROOT/docs" "$RESOURCES_DIR/"
+fi
+
 if [ -f "$ROOT/LICENSE" ]; then
   cp "$ROOT/LICENSE" "$RESOURCES_DIR/"
 fi

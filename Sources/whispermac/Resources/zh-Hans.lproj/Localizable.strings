@@ -17,6 +17,7 @@
 "button.start_transcription" = "开始转写";
 "button.transcribing" = "转写中…";
 "button.view_readme" = "查看 README";
+"button.star_on_github" = "去 GitHub 点 Star";
 "label.overall_progress" = "总进度";
 "label.current_file" = "当前文件";
 "section.logs" = "日志";
