@@ -11,10 +11,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$ROOT/dist"
 APP_SRC="$DIST_DIR/WhisperMac.app"
 ASSET_DIR="$DIST_DIR/release-assets"
-STAGE_DIR="$ASSET_DIR/stage"
-APP_STAGE="$STAGE_DIR/WhisperMac.app"
+STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/whispermac-release-stage.XXXXXX")"
+APP_STAGE="$STAGE_ROOT/WhisperMac.app"
 ZIP_PATH="$ASSET_DIR/WhisperMac-${VERSION_TAG}-app-only-macos-arm64.zip"
 SHA_PATH="$ASSET_DIR/WhisperMac-${VERSION_TAG}-app-only-macos-arm64.sha256"
+
+cleanup() {
+  rm -rf "$STAGE_ROOT"
+}
+trap cleanup EXIT
 
 if [[ ! -d "$APP_SRC" ]]; then
   echo "App bundle not found: $APP_SRC" >&2
@@ -23,7 +28,7 @@ if [[ ! -d "$APP_SRC" ]]; then
 fi
 
 rm -rf "$ASSET_DIR"
-mkdir -p "$STAGE_DIR"
+mkdir -p "$ASSET_DIR"
 
 cp -R "$APP_SRC" "$APP_STAGE"
 rm -rf "$APP_STAGE/Contents/Resources/runtime/Models"

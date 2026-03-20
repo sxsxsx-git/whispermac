@@ -1,4 +1,6 @@
 "app.subtitle" = "MP4 / M4A を TXT / SRT に変換します。large-v3-turbo、Metal GPU、高速化のための任意の Core ML / ANE encoder を使用します。";
+"label.interface_language" = "表示言語";
+"language.system" = "システム設定";
 "section.input_files" = "入力ファイル";
 "button.add_media" = "MP4 / M4A を追加";
 "button.clear_list" = "一覧をクリア";
@@ -7,6 +9,7 @@
 "button.remove" = "削除";
 "section.output" = "出力";
 "label.output_directory" = "出力ディレクトリ";
+"label.export_formats" = "出力形式";
 "placeholder.output_directory" = "空欄の場合は各入力ファイルのディレクトリを使用";
 "toggle.export_txt" = "TXT を出力";
 "toggle.export_srt" = "SRT を出力";

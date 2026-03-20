@@ -7,6 +7,12 @@ final class AppModel: ObservableObject {
     private static let repositoryURL = URL(string: "https://github.com/sxsxsx-git/whispermac")!
 
     @Published var inputFiles: [URL]
+    @Published var appLanguage: AppLanguage {
+        didSet {
+            L.setAppLanguage(appLanguage)
+            refreshLocalizedContent()
+        }
+    }
     @Published var outputDirectoryPath: String {
         didSet { store(outputDirectoryPath, forKey: Keys.outputDirectoryPath) }
     }
@@ -44,6 +50,7 @@ final class AppModel: ObservableObject {
         }
 
         inputFiles = []
+        appLanguage = AppLanguage(storedValue: defaults.string(forKey: Keys.appLanguage))
         outputDirectoryPath = defaults.string(forKey: Keys.outputDirectoryPath) ?? ""
         whisperCLIPath = defaults.string(forKey: Keys.whisperCLIPath) ?? guessed.whisperCLIPath
         modelPath = defaults.string(forKey: Keys.modelPath) ?? guessed.modelPath
@@ -190,6 +197,22 @@ final class AppModel: ObservableObject {
 
     func openProjectRepository() {
         NSWorkspace.shared.open(Self.repositoryURL)
+    }
+
+    func refreshLocalizedContent() {
+        store(appLanguage.rawValue, forKey: Keys.appLanguage)
+
+        if !isRunning {
+            statusText = ""
+            currentStageDescription = ""
+            logs = [
+                L.tr("log.default_model"),
+                L.tr("log.audio_preprocessor_switched"),
+                L.tr("log.coreml_auto"),
+            ]
+        }
+
+        objectWillChange.send()
     }
 
     func setFormat(_ format: OutputFormat, enabled: Bool) {
@@ -383,6 +406,7 @@ private struct AppConfigurationSnapshot {
 }
 
 private enum Keys {
+    static let appLanguage = "appLanguage"
     static let outputDirectoryPath = "outputDirectoryPath"
     static let whisperCLIPath = "whisperCLIPath"
     static let modelPath = "modelPath"

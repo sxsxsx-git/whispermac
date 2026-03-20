@@ -1,4 +1,6 @@
 "app.subtitle" = "Convert MP4 / M4A to TXT / SRT with large-v3-turbo, Metal GPU acceleration, and optional Core ML / ANE offload.";
+"label.interface_language" = "Interface Language";
+"language.system" = "System";
 "section.input_files" = "Input Files";
 "button.add_media" = "Add MP4 / M4A";
 "button.clear_list" = "Clear List";
@@ -7,6 +9,7 @@
 "button.remove" = "Remove";
 "section.output" = "Output";
 "label.output_directory" = "Output Directory";
+"label.export_formats" = "Export Formats";
 "placeholder.output_directory" = "Leave empty to use each input file's directory";
 "toggle.export_txt" = "Export TXT";
 "toggle.export_srt" = "Export SRT";

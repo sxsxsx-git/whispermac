@@ -3,24 +3,75 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
 
+    private let contentMaxWidth: CGFloat = 1080
+    private let fieldLabelWidth: CGFloat = 108
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header
-            fileSection
-            outputSection
-            toolSection
-            actionSection
-            logSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                fileSection
+                outputSection
+                toolSection
+                actionSection
+                logSection
+            }
+            .frame(maxWidth: contentMaxWidth, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 24)
         }
-        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("WhisperMac")
-                .font(.system(size: 30, weight: .bold))
-            Text(L.tr("app.subtitle"))
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("WhisperMac")
+                    .font(.system(size: 30, weight: .bold))
+                Text(L.tr("app.subtitle"))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 10) {
+                Text(L.tr("label.interface_language"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Menu {
+                    ForEach(AppLanguage.allCases) { language in
+                        Button {
+                            model.appLanguage = language
+                        } label: {
+                            if model.appLanguage == language {
+                                Label(language.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(language.displayName)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(model.appLanguage.displayName)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .frame(width: 150, alignment: .leading)
+                }
+
+                HStack(spacing: 10) {
+                    Button(L.tr("button.view_readme")) {
+                        model.openProjectREADME()
+                    }
+
+                    Button(L.tr("button.star_on_github")) {
+                        model.openProjectRepository()
+                    }
+                }
+            }
         }
     }
 
@@ -74,7 +125,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text(L.tr("label.output_directory"))
-                        .frame(width: 90, alignment: .leading)
+                        .frame(width: fieldLabelWidth, alignment: .leading)
                     TextField(L.tr("placeholder.output_directory"), text: $model.outputDirectoryPath)
                         .textFieldStyle(.roundedBorder)
                     Button(L.tr("button.choose")) {
@@ -86,8 +137,12 @@ struct ContentView: View {
                 Text(model.outputDirectoryDisplayText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.leading, fieldLabelWidth)
 
-                HStack(spacing: 20) {
+                HStack(alignment: .center, spacing: 20) {
+                    Text(L.tr("label.export_formats"))
+                        .frame(width: fieldLabelWidth, alignment: .leading)
+
                     Toggle(L.tr("toggle.export_txt"), isOn: outputBinding(for: .txt))
                     Toggle(L.tr("toggle.export_srt"), isOn: outputBinding(for: .srt))
                     Spacer()
@@ -103,8 +158,7 @@ struct ContentView: View {
     private var toolSection: some View {
         GroupBox(L.tr("section.runtime")) {
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(L.tr("label.acceleration_mode"))
+                HStack(alignment: .top, spacing: 12) {
                     Picker(L.tr("label.acceleration_mode"), selection: $model.accelerationMode) {
                         ForEach(AccelerationMode.allCases, id: \.self) { mode in
                             Text(mode.title).tag(mode)
@@ -112,12 +166,15 @@ struct ContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .disabled(model.isRunning)
+                    .frame(maxWidth: 320, alignment: .leading)
 
-                    Text(model.accelerationDetail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
                 }
+
+                Text(model.accelerationDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 toolPathRow(title: L.tr("field.whisper_cli"), text: $model.whisperCLIPath) {
                     model.chooseWhisperCLI()
@@ -151,16 +208,7 @@ struct ContentView: View {
                 if !model.statusText.isEmpty {
                     Text(model.statusText)
                         .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button(L.tr("button.view_readme")) {
-                    model.openProjectREADME()
-                }
-
-                Button(L.tr("button.star_on_github")) {
-                    model.openProjectRepository()
+                        .lineLimit(1)
                 }
             }
 
@@ -193,14 +241,14 @@ struct ContentView: View {
                     .textSelection(.enabled)
                     .padding(.vertical, 6)
             }
-            .frame(minHeight: 220)
+            .frame(minHeight: 160, maxHeight: 220)
         }
     }
 
     private func toolPathRow(title: String, text: Binding<String>, action: @escaping () -> Void) -> some View {
         HStack {
             Text(title)
-                .frame(width: 90, alignment: .leading)
+                .frame(width: fieldLabelWidth, alignment: .leading)
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
             Button(L.tr("button.choose"), action: action)

@@ -1,4 +1,6 @@
 "app.subtitle" = "把 MP4 / M4A 转成 TXT / SRT，使用 large-v3-turbo、Metal GPU 加速，以及可选的 Core ML / ANE encoder 加速。";
+"label.interface_language" = "界面语言";
+"language.system" = "跟随系统";
 "section.input_files" = "输入文件";
 "button.add_media" = "添加 MP4 / M4A";
 "button.clear_list" = "清空列表";
@@ -7,6 +9,7 @@
 "button.remove" = "移除";
 "section.output" = "输出";
 "label.output_directory" = "输出目录";
+"label.export_formats" = "导出格式";
 "placeholder.output_directory" = "留空时跟随输入文件目录";
 "toggle.export_txt" = "导出 TXT";
 "toggle.export_srt" = "导出 SRT";
