@@ -27,9 +27,10 @@ struct RuntimeModelPlan: Sendable {
 
 enum RuntimeModelResolver {
     static func prepare(modelPath: String, requestedMode: AccelerationMode) throws -> RuntimeModelPlan {
-        let originalPath = PathResolver.expandingTilde(modelPath)
-        guard FileManager.default.fileExists(atPath: originalPath) else {
-            throw RuntimeModelResolverError.missingModel(originalPath)
+        let originalPath = PathResolver.resolveModelPath(modelPath)
+        guard !originalPath.isEmpty else {
+            let requestedPath = PathResolver.expandingTilde(modelPath)
+            throw RuntimeModelResolverError.missingModel(requestedPath.isEmpty ? modelPath : requestedPath)
         }
 
         let originalURL = URL(fileURLWithPath: originalPath)
