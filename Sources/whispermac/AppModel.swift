@@ -45,6 +45,16 @@ final class AppModel: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         let guessed = PathResolver.guessDefaults()
+        let storedWhisperCLIPath = defaults.string(forKey: Keys.whisperCLIPath) ?? ""
+        let resolvedWhisperCLIPath = PathResolver.resolveWhisperCLIPath(storedWhisperCLIPath)
+        let initialWhisperCLIPath = resolvedWhisperCLIPath.isEmpty
+            ? (storedWhisperCLIPath.isEmpty ? guessed.whisperCLIPath : storedWhisperCLIPath)
+            : resolvedWhisperCLIPath
+        let storedModelPath = defaults.string(forKey: Keys.modelPath) ?? ""
+        let resolvedModelPath = PathResolver.resolveModelPath(storedModelPath, whisperCLIPath: initialWhisperCLIPath)
+        let initialModelPath = resolvedModelPath.isEmpty
+            ? (storedModelPath.isEmpty ? guessed.modelPath : storedModelPath)
+            : resolvedModelPath
         let storedFormats = defaults.array(forKey: Keys.outputFormats) as? [String]
         let storedAccelerationMode = defaults.string(forKey: Keys.accelerationMode)
         var selectedFormats = Set((storedFormats ?? []).compactMap(OutputFormat.init(rawValue:)))
@@ -55,16 +65,8 @@ final class AppModel: ObservableObject {
         inputFiles = []
         appLanguage = AppLanguage(storedValue: defaults.string(forKey: Keys.appLanguage))
         outputDirectoryPath = defaults.string(forKey: Keys.outputDirectoryPath) ?? ""
-        let storedWhisperCLIPath = defaults.string(forKey: Keys.whisperCLIPath)
-        let storedModelPath = defaults.string(forKey: Keys.modelPath)
-        whisperCLIPath = PathResolver.preferredExecutablePath(
-            storedValue: storedWhisperCLIPath,
-            guessedValue: guessed.whisperCLIPath
-        )
-        modelPath = PathResolver.preferredFilePath(
-            storedValue: storedModelPath,
-            guessedValue: guessed.modelPath
-        )
+        whisperCLIPath = initialWhisperCLIPath
+        modelPath = initialModelPath
         accelerationMode = AccelerationMode(rawValue: storedAccelerationMode ?? "") ?? .gpuAndANE
         outputFormats = selectedFormats
 
@@ -74,10 +76,10 @@ final class AppModel: ObservableObject {
             L.tr("log.coreml_auto"),
         ]
 
-        if whisperCLIPath != (storedWhisperCLIPath ?? "") {
+        if whisperCLIPath != storedWhisperCLIPath {
             store(whisperCLIPath, forKey: Keys.whisperCLIPath)
         }
-        if modelPath != (storedModelPath ?? "") {
+        if modelPath != storedModelPath {
             store(modelPath, forKey: Keys.modelPath)
         }
     }
@@ -87,13 +89,15 @@ final class AppModel: ObservableObject {
     }
 
     var canStart: Bool {
-        !isRunning &&
-        !isDownloadingRuntime &&
-        !inputFiles.isEmpty &&
-        !whisperCLIPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        configurationLooksReady &&
-        !outputFormats.isEmpty
+        let resolvedWhisperCLIPath = self.resolvedWhisperCLIPath
+        let resolvedModelPath = self.resolvedModelPath
+
+        return !isRunning &&
+            !isDownloadingRuntime &&
+            !inputFiles.isEmpty &&
+            !resolvedWhisperCLIPath.isEmpty &&
+            !resolvedModelPath.isEmpty &&
+            !outputFormats.isEmpty
     }
 
     var isBusy: Bool {
@@ -112,7 +116,8 @@ final class AppModel: ObservableObject {
     }
 
     var configurationLooksReady: Bool {
-        missingRuntimeComponents.isEmpty
+        !resolvedModelPath.isEmpty &&
+        !resolvedWhisperCLIPath.isEmpty
     }
 
     var missingRuntimeComponents: Set<RuntimeComponent> {
@@ -132,18 +137,20 @@ final class AppModel: ObservableObject {
     }
 
     var accelerationSummary: String {
-        let modelURL = URL(fileURLWithPath: PathResolver.expandingTilde(modelPath))
-        let coreMLURL = OutputPaths.coreMLModelURL(for: modelURL)
-        let hasCLI = !PathResolver.resolveExecutablePath(whisperCLIPath).isEmpty
-        let hasModel = FileManager.default.fileExists(atPath: modelURL.path)
-        let hasCoreML = FileManager.default.fileExists(atPath: coreMLURL.path)
-
-        if !hasCLI {
+        let resolvedWhisperCLIPath = self.resolvedWhisperCLIPath
+        guard !resolvedWhisperCLIPath.isEmpty else {
             return L.tr("summary.runtime_missing_cli")
         }
-        if !hasModel {
+
+        let resolvedModelPath = self.resolvedModelPath
+        guard !resolvedModelPath.isEmpty else {
             return L.tr("summary.model_assets_missing")
         }
+
+        let modelURL = URL(fileURLWithPath: resolvedModelPath)
+        let coreMLURL = OutputPaths.coreMLModelURL(for: modelURL)
+        let hasCoreML = FileManager.default.fileExists(atPath: coreMLURL.path)
+
         if accelerationMode == .gpuAndANE && !hasCoreML {
             return L.tr("summary.coreml_missing_download")
         }
@@ -304,11 +311,14 @@ final class AppModel: ObservableObject {
             return
         }
 
+        let resolvedWhisperCLIPath = self.resolvedWhisperCLIPath
+        let resolvedModelPath = self.resolvedModelPath
+
         let snapshot = AppConfigurationSnapshot(
             inputFiles: inputFiles,
             outputDirectoryPath: outputDirectoryPath,
-            whisperCLIPath: whisperCLIPath,
-            modelPath: modelPath,
+            whisperCLIPath: resolvedWhisperCLIPath,
+            modelPath: resolvedModelPath,
             accelerationMode: accelerationMode,
             outputFormats: outputFormats
         )
@@ -489,17 +499,19 @@ final class AppModel: ObservableObject {
 
     private func runtimeComponentsMissing(whisperCLIPath: String, modelPath: String) -> Set<RuntimeComponent> {
         var missing = Set<RuntimeComponent>()
+        let resolvedWhisperCLIPath = PathResolver.resolveWhisperCLIPath(whisperCLIPath)
+        let resolvedModelPath = PathResolver.resolveModelPath(modelPath, whisperCLIPath: resolvedWhisperCLIPath)
 
-        if PathResolver.resolveExecutablePath(whisperCLIPath).isEmpty {
+        if resolvedWhisperCLIPath.isEmpty {
             missing.insert(.whisperCLI)
         }
 
-        if !FileManager.default.fileExists(atPath: PathResolver.expandingTilde(modelPath)) {
+        if resolvedModelPath.isEmpty {
             missing.insert(.model)
         }
 
         if !missing.contains(.model), accelerationMode == .gpuAndANE {
-            let modelURL = URL(fileURLWithPath: PathResolver.expandingTilde(modelPath))
+            let modelURL = URL(fileURLWithPath: resolvedModelPath)
             let coreMLURL = OutputPaths.coreMLModelURL(for: modelURL)
             if !FileManager.default.fileExists(atPath: coreMLURL.path) {
                 missing.insert(.coreMLEncoder)
@@ -511,6 +523,14 @@ final class AppModel: ObservableObject {
 
     private func store(_ value: Any, forKey key: String) {
         defaults.set(value, forKey: key)
+    }
+
+    private var resolvedWhisperCLIPath: String {
+        PathResolver.resolveWhisperCLIPath(whisperCLIPath)
+    }
+
+    private var resolvedModelPath: String {
+        PathResolver.resolveModelPath(modelPath, whisperCLIPath: resolvedWhisperCLIPath)
     }
 
     private func resolvedOutputDirectoryPath(for inputURL: URL?, overridePath: String? = nil) -> String {
