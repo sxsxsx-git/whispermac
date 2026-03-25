@@ -1,51 +1,83 @@
 # WhisperMac
 
-Free, local-first transcription for Apple Silicon Macs. WhisperMac turns local
-audio and video into `txt` and `srt` with `whisper.cpp`, Metal GPU
-acceleration, and optional Core ML / ANE encoder offload.
+<p align="center">
+  Free, local-first transcription for Apple Silicon Macs.
+  <br />
+  Convert MP4 / M4A to <code>txt</code> and <code>srt</code> with <code>whisper.cpp</code>,
+  Metal GPU acceleration, and optional Core ML / ANE encoder offload.
+</p>
 
-If this repo helps you, please star it. That is the clearest signal that the
-project is useful and worth continuing.
+<p align="center">
+  <a href="https://github.com/sxsxsx-git/whispermac/releases">
+    <img src="https://img.shields.io/github/v/release/sxsxsx-git/whispermac?display_name=tag" alt="Latest Release" />
+  </a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14+" />
+  <img src="https://img.shields.io/badge/Apple%20Silicon-Required-111111" alt="Apple Silicon Required" />
+  <img src="https://img.shields.io/badge/SwiftUI-Native%20macOS-0A84FF" alt="SwiftUI Native macOS" />
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-success" alt="MIT License" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="docs/installation.md"><strong>Installation</strong></a>
+  ·
+  <a href="docs/faq.md"><strong>FAQ</strong></a>
+  ·
+  <a href="docs/positioning.md"><strong>Comparison</strong></a>
+  ·
+  <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
+  ·
+  <a href="https://github.com/sxsxsx-git/whispermac/releases"><strong>Releases</strong></a>
+</p>
+
+<p align="center">
+  If this repo helps you, please star it. That is the clearest signal that the
+  project is useful and worth continuing.
+</p>
+
+![WhisperMac main window](docs/screenshots/screenshot.png)
 
 ## Why WhisperMac
 
-- Free and open source
-- Local-first: your media stays on your Mac
-- Built for Apple Silicon instead of treating it as an afterthought
-- Native macOS app, not just a terminal wrapper
-- `txt` and `srt` export for practical transcript workflows
-- Clear GPU-only vs `GPU + ANE` runtime behavior
-- Honest about what is accelerated and what is not
+WhisperMac is a native macOS app for people who want local transcription without
+shipping their files to a cloud service or assembling a command-line workflow by
+hand.
 
-## Quick Start for Users
+- Local-first: your media stays on your Mac
+- Native SwiftUI app, not just a thin terminal wrapper
+- Built for Apple Silicon with clear `GPU only` and `GPU + ANE` runtime modes
+- Practical transcript export in `txt` and `srt`
+- Uses macOS built-in `afconvert`, so FFmpeg is not required
+- Localized UI in English, Simplified Chinese, and Japanese
+
+## Highlights
+
+| Feature | What you get |
+| --- | --- |
+| Native workflow | Add local files, choose output formats, and start transcription from a macOS UI |
+| Local runtime | Runs `whisper.cpp` through `whisper-cli` on your machine |
+| Acceleration modes | Switch between `GPU only` and `GPU + ANE` when a compatible Core ML encoder is present |
+| Output | Export plain text and subtitle files for practical downstream use |
+| Visibility | Real-time progress plus filtered logs for status and debugging |
+| Sensible preprocessing | Audio conversion uses macOS `afconvert` instead of a bundled FFmpeg dependency |
+
+## Quick Start
 
 1. Read the [Installation Guide](docs/installation.md).
-2. If a release asset exists, download the latest app-only arm64 zip. If not,
+2. Download the latest app-only arm64 release asset if one exists. Otherwise,
    build from source.
-3. Make sure you have `ggml-large-v3-turbo.bin`. Add
-   `ggml-large-v3-turbo-encoder.mlmodelc` only if you want `GPU + ANE` mode.
-4. Open WhisperMac, add your media files, pick output formats, and start
+3. Prepare `ggml-large-v3-turbo.bin`.
+4. Add `ggml-large-v3-turbo-encoder.mlmodelc` only if you want `GPU + ANE`
+   mode.
+5. Open WhisperMac, add your files, choose export formats, and start
    transcribing.
 
-Important notes before you try it:
+Before you try it:
 
-- The project currently targets `macOS 14+` on Apple Silicon.
+- The current target is `macOS 14+` on Apple Silicon.
 - Release packaging is currently `app-only`: models are not bundled.
 - Signed and notarized releases are not set up yet.
-
-## Features
-
-- Free, open-source local transcription workflow
-- Native SwiftUI macOS app
-- Batch transcription for common local media files
-- `txt` and `srt` export
-- Default workflow centered on `large-v3-turbo`
-- Real-time progress reporting
-- Filtered logs for both user status and debugging
-- Runtime acceleration switch between `GPU only` and `GPU + ANE`
-- Uses macOS built-in `afconvert` for audio preprocessing, so FFmpeg is not
-  required
-- Localized UI in English, Simplified Chinese, and Japanese
 
 ## Performance Snapshot
 
@@ -57,7 +89,6 @@ the measured results were:
 - `GPU only`: `205.22s`
 
 In that specific run, `GPU + ANE` was about `15.5%` faster than `GPU only`.
-
 This is not a universal benchmark. Actual speed depends on model choice, media
 content, thermals, and current `whisper.cpp` behavior.
 
@@ -77,7 +108,18 @@ Important limitation:
   `whisper.cpp` architecture. The Core ML path typically accelerates the
   encoder, while decoding and other work still use GPU and CPU resources.
 
-## Docs
+## Runtime Assets
+
+Expected default runtime assets:
+
+- `Models/ggml-large-v3-turbo.bin`
+- `Models/ggml-large-v3-turbo-encoder.mlmodelc` (optional, for `GPU + ANE`)
+- `.build-tools/whisper.cpp/build/bin/whisper-cli`
+
+If these assets exist, the bundle script copies them into the app under
+`Contents/Resources/runtime`.
+
+## Documentation
 
 - [Installation Guide](docs/installation.md)
 - [FAQ](docs/faq.md)
@@ -87,7 +129,7 @@ Important limitation:
 
 ## Developer Setup
 
-Install the local build dependencies:
+Install local build dependencies:
 
 ```bash
 xcode-select -s /Applications/Xcode.app
@@ -119,16 +161,12 @@ The generated app bundle is written to:
 ./dist/WhisperMac.app
 ```
 
-## Runtime Assets
+Build and test locally:
 
-Expected default runtime assets:
-
-- `Models/ggml-large-v3-turbo.bin`
-- `Models/ggml-large-v3-turbo-encoder.mlmodelc` (optional, for `GPU + ANE`)
-- `.build-tools/whisper.cpp/build/bin/whisper-cli`
-
-If these assets exist, the bundle script copies them into the app under
-`Contents/Resources/runtime`.
+```bash
+swift build
+swift test
+```
 
 ## Known Limitations
 
@@ -142,18 +180,7 @@ If these assets exist, the bundle script copies them into the app under
 - The current release packaging flow creates an app-only zip and strips bundled
   models from the archive.
 
-## Contributing and License
-
-Build and test locally:
-
-```bash
-swift build
-swift test
-```
-
-Contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-License and notices:
+## License
 
 - Project license: `MIT`, see [LICENSE](LICENSE)
 - Third-party notices: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
