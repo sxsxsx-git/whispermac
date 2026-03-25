@@ -25,6 +25,8 @@
 "label.current_file" = "現在のファイル";
 "section.logs" = "ログ";
 "button.choose" = "選択…";
+"button.download_runtime" = "不足している実行環境を取得";
+"button.not_now" = "今はしない";
 "field.whisper_cli" = "whisper-cli";
 "field.model_file" = "モデルファイル";
 "log.default_model" = "デフォルトモデルは large-v3-turbo に設定されています。";
@@ -32,6 +34,14 @@
 "log.coreml_auto" = "モデルの横に large-v3-turbo-encoder.mlmodelc がある場合、whisper.cpp は自動的に Core ML encoder を使用します。";
 "display.follow_input_dir" = "%@（入力ファイルと同じ場所）";
 "display.follow_input_default" = "デフォルトでは入力ファイルのディレクトリを使用";
+"alert.runtime_missing_title" = "不足している実行環境をダウンロードしますか？";
+"alert.runtime_missing_message_cli" = "WhisperMac は whisper-cli を見つけられませんでした。whisper.cpp のソースをダウンロードし、ローカルで whisper-cli をビルドして、Application Support に保存できます。";
+"alert.runtime_missing_message_model" = "WhisperMac は必要なモデル資産を見つけられませんでした。ggml-large-v3-turbo.bin と ggml-large-v3-turbo-encoder.mlmodelc を Application Support にダウンロードできます。";
+"alert.runtime_missing_message_both" = "WhisperMac は whisper-cli とデフォルトモデルを見つけられませんでした。whisper-cli をローカルでビルドし、モデルをダウンロードして Application Support に保存できます。";
+"summary.runtime_missing_cli" = "同梱されるはずの whisper-cli が見つかりません。この app bundle は不完全なので、ランタイムを含めて再ビルドする必要があります。";
+"summary.model_assets_missing" = "モデル資産が見つかりません。WhisperMac は ggml-large-v3-turbo.bin と Core ML encoder を自動ダウンロードできます。";
+"summary.coreml_missing_download" = "GPU + ANE が選択されていますが、Core ML encoder がありません。WhisperMac は必要なモデル資産を自動ダウンロードできます。";
+"summary.runtime_missing_both" = "whisper-cli とモデルファイルが見つかりません。手動指定するか、WhisperMac に不足分を自動取得させてください。";
 "summary.model_missing" = "モデルファイルが見つかりません。scripts/prepare-model.sh を実行するか、ggml-large-v3-turbo.bin を手動で選択してください。";
 "summary.mode_gpu_ane" = "現在のモードは GPU + ANE です。encoder は Core ML / ANE、decoder は Metal GPU を使用します。";
 "summary.mode_gpu_ane_fallback" = "GPU + ANE が選択されていますが、Core ML encoder が見つかりません。実行時は GPU only にフォールバックします。";
@@ -45,6 +55,12 @@
 "mode.gpu_ane_detail" = "encoder は Core ML / ANE、decoder は Metal GPU を使います。";
 "status.preparing_start" = "準備中…";
 "status.prepare_failed" = "準備失敗";
+"status.runtime_preparing_download" = "実行環境のダウンロードを準備中…";
+"status.runtime_downloading_model" = "デフォルトモデルをダウンロード中…";
+"status.runtime_downloading_encoder" = "Core ML encoder をダウンロード中…";
+"status.runtime_extracting_encoder" = "Core ML encoder を展開中…";
+"status.runtime_ready" = "実行環境のダウンロードが完了しました";
+"status.runtime_download_failed" = "実行環境のダウンロードに失敗しました";
 "status.processing" = "処理中 %d/%d";
 "stage.preparing" = "準備中";
 "stage.extracting_audio" = "音声抽出";
@@ -70,6 +86,12 @@
 "log.generated_files" = "生成されたファイル:";
 "log.failed_file" = "失敗: %@";
 "log.completed_summary" = "完了: 成功 %d、失敗 %d";
+"log.runtime_download_start" = "不足している実行環境の準備を開始します…";
+"log.runtime_download_component_model" = "必要なモデル資産が不足しています。WhisperMac は ggml-large-v3-turbo.bin と Core ML encoder をダウンロードします。";
+"log.runtime_download_source" = "ダウンロード中: %@";
+"log.runtime_download_extract" = "アーカイブを展開中…";
+"log.runtime_download_install" = "インストール済み: %@";
+"log.runtime_download_complete" = "実行環境のダウンロードが完了しました。";
 "resolver.note.detected_coreml" = "Core ML encoder を検出しました。GPU + ANE モードを使用します。";
 "resolver.note.fallback_pure_gpu" = "Core ML encoder が見つかりません。GPU only モードへフォールバックします。";
 "resolver.note.gpu_only_runtime_link" = "GPU only モード用に Core ML companion を持たない実行時モデルパスを作成しました。";
@@ -78,6 +100,7 @@
 "error.missing_executable" = "実行ファイルが見つかりません: %@";
 "error.failed_to_start" = "コマンドの起動に失敗しました: %@";
 "error.non_zero_exit" = "コマンドが失敗しました (%d): %@\n%@";
+"error.invalid_download_response" = "ダウンロードに失敗したか、想定外のレスポンスが返されました: %@";
 "error.model_missing" = "モデルファイルが存在しません: %@";
 "error.failed_gpu_link" = "GPU only 実行時モデルリンクの作成に失敗しました: %@";
 "transcription.prepare_file" = "ファイルを準備中: %@";

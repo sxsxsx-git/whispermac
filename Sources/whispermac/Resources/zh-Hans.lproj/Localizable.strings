@@ -25,6 +25,8 @@
 "label.current_file" = "当前文件";
 "section.logs" = "日志";
 "button.choose" = "选择…";
+"button.download_runtime" = "下载缺失运行资源";
+"button.not_now" = "暂不处理";
 "field.whisper_cli" = "whisper-cli";
 "field.model_file" = "模型文件";
 "log.default_model" = "默认模型已设为 large-v3-turbo。";
@@ -32,6 +34,14 @@
 "log.coreml_auto" = "如果模型旁边存在 large-v3-turbo-encoder.mlmodelc，whisper.cpp 会自动启用 Core ML encoder。";
 "display.follow_input_dir" = "%@（跟随输入文件）";
 "display.follow_input_default" = "默认跟随输入文件目录";
+"alert.runtime_missing_title" = "要下载缺失的运行资源吗？";
+"alert.runtime_missing_message_cli" = "WhisperMac 没有找到 whisper-cli。它可以自动下载 whisper.cpp 源码，在本机编译 whisper-cli，并保存到 Application Support。";
+"alert.runtime_missing_message_model" = "WhisperMac 没有找到必需的模型资源。它可以自动下载 ggml-large-v3-turbo.bin 和 ggml-large-v3-turbo-encoder.mlmodelc，并保存到 Application Support。";
+"alert.runtime_missing_message_both" = "WhisperMac 没有找到 whisper-cli 和默认模型。它可以在本机构建 whisper-cli，并下载模型后一起保存到 Application Support。";
+"summary.runtime_missing_cli" = "内置的 whisper-cli 缺失。这个 app 包不完整，需要重新打包并把运行时二进制带进去。";
+"summary.model_assets_missing" = "模型资源缺失。WhisperMac 可以自动下载 ggml-large-v3-turbo.bin 和 Core ML encoder。";
+"summary.coreml_missing_download" = "你选择了 GPU + ANE，但 Core ML encoder 还不存在。WhisperMac 可以自动下载所需模型资源。";
+"summary.runtime_missing_both" = "还没有找到 whisper-cli 和模型文件。你可以手动指定，或让 WhisperMac 自动下载缺失资源。";
 "summary.model_missing" = "模型文件还不存在。先运行 scripts/prepare-model.sh，或者手动选择 ggml-large-v3-turbo.bin。";
 "summary.mode_gpu_ane" = "当前模式是 GPU + ANE：encoder 会走 Core ML / ANE，decoder 继续走 Metal GPU。";
 "summary.mode_gpu_ane_fallback" = "你选择了 GPU + ANE，但还没找到 Core ML encoder；运行时会自动回退为纯 GPU。";
@@ -45,6 +55,12 @@
 "mode.gpu_ane_detail" = "encoder 走 Core ML / ANE，decoder 继续走 Metal GPU。";
 "status.preparing_start" = "准备开始…";
 "status.prepare_failed" = "准备失败";
+"status.runtime_preparing_download" = "准备下载运行资源…";
+"status.runtime_downloading_model" = "正在下载默认模型…";
+"status.runtime_downloading_encoder" = "正在下载 Core ML encoder…";
+"status.runtime_extracting_encoder" = "正在解压 Core ML encoder…";
+"status.runtime_ready" = "运行资源下载完成";
+"status.runtime_download_failed" = "运行资源下载失败";
 "status.processing" = "处理中 %d/%d";
 "stage.preparing" = "准备中";
 "stage.extracting_audio" = "提取音频";
@@ -70,6 +86,12 @@
 "log.generated_files" = "生成文件:";
 "log.failed_file" = "失败: %@";
 "log.completed_summary" = "完成：成功 %d，失败 %d";
+"log.runtime_download_start" = "开始准备缺失的运行资源…";
+"log.runtime_download_component_model" = "缺少必需的模型资源。WhisperMac 将自动下载 ggml-large-v3-turbo.bin 和 Core ML encoder。";
+"log.runtime_download_source" = "正在下载: %@";
+"log.runtime_download_extract" = "正在解压归档文件…";
+"log.runtime_download_install" = "已安装: %@";
+"log.runtime_download_complete" = "运行资源下载完成。";
 "resolver.note.detected_coreml" = "检测到 Core ML encoder，将启用 GPU + ANE 路径。";
 "resolver.note.fallback_pure_gpu" = "未找到 Core ML encoder，已回退为纯 GPU 模式。";
 "resolver.note.gpu_only_runtime_link" = "已为纯 GPU 模式创建无 Core ML companion 的运行时模型路径。";
@@ -78,6 +100,7 @@
 "error.missing_executable" = "找不到可执行文件: %@";
 "error.failed_to_start" = "命令启动失败: %@";
 "error.non_zero_exit" = "命令执行失败(%d): %@\n%@";
+"error.invalid_download_response" = "下载失败，或返回了异常响应: %@";
 "error.model_missing" = "模型文件不存在: %@";
 "error.failed_gpu_link" = "创建纯 GPU 运行模型失败: %@";
 "transcription.prepare_file" = "准备处理文件: %@";

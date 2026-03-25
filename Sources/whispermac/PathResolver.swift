@@ -5,6 +5,15 @@ enum PathResolver {
         Bundle.main.resourceURL?.appending(path: "runtime")
     }
 
+    static var applicationSupportRoot: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "WhisperMac", directoryHint: .isDirectory)
+    }
+
+    static var downloadedRuntimeRoot: URL {
+        applicationSupportRoot.appending(path: "runtime", directoryHint: .isDirectory)
+    }
+
     static var projectRoot: URL {
         let current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let bundleParent = Bundle.main.bundleURL.deletingLastPathComponent()
@@ -23,6 +32,7 @@ enum PathResolver {
 
         let modelPath = firstExistingPath(
             bundledPaths(for: "Models/ggml-large-v3-turbo.bin") +
+            downloadedPaths(for: "Models/ggml-large-v3-turbo.bin") +
             roots.map { $0.appending(path: "Models/ggml-large-v3-turbo.bin").path } +
             roots.map { $0.appending(path: ".build-tools/whisper.cpp/models/ggml-large-v3-turbo.bin").path }
         )
@@ -58,6 +68,24 @@ enum PathResolver {
         return ""
     }
 
+    static func preferredExecutablePath(storedValue: String?, guessedValue: String) -> String {
+        let trimmed = storedValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return guessedValue }
+
+        let resolved = resolveExecutablePath(trimmed)
+        guard !resolved.isEmpty else { return guessedValue }
+
+        return trimmed.contains("/") ? expandingTilde(trimmed) : trimmed
+    }
+
+    static func preferredFilePath(storedValue: String?, guessedValue: String) -> String {
+        let trimmed = storedValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return guessedValue }
+
+        let expanded = expandingTilde(trimmed)
+        return FileManager.default.fileExists(atPath: expanded) ? expanded : guessedValue
+    }
+
     static func expandingTilde(_ value: String) -> String {
         NSString(string: value).expandingTildeInPath
     }
@@ -72,6 +100,10 @@ enum PathResolver {
     private static func bundledPaths(for relativePath: String) -> [String] {
         guard let bundledRuntimeRoot else { return [] }
         return [bundledRuntimeRoot.appending(path: relativePath).path]
+    }
+
+    private static func downloadedPaths(for relativePath: String) -> [String] {
+        [downloadedRuntimeRoot.appending(path: relativePath).path]
     }
 
     private static func firstExistingPath(_ values: [String]) -> String {

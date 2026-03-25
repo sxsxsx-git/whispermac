@@ -25,6 +25,8 @@
 "label.current_file" = "Current File";
 "section.logs" = "Logs";
 "button.choose" = "Choose…";
+"button.download_runtime" = "Download Missing Runtime";
+"button.not_now" = "Not Now";
 "field.whisper_cli" = "whisper-cli";
 "field.model_file" = "Model File";
 "log.default_model" = "Default model set to large-v3-turbo.";
@@ -32,6 +34,14 @@
 "log.coreml_auto" = "If large-v3-turbo-encoder.mlmodelc is present next to the model, whisper.cpp will automatically use the Core ML encoder.";
 "display.follow_input_dir" = "%@ (same as input file)";
 "display.follow_input_default" = "Defaults to the input file directory";
+"alert.runtime_missing_title" = "Download Missing Runtime?";
+"alert.runtime_missing_message_cli" = "WhisperMac could not find whisper-cli. It can download whisper.cpp source, build whisper-cli locally, and save it under Application Support.";
+"alert.runtime_missing_message_model" = "WhisperMac could not find the required model assets. It can download ggml-large-v3-turbo.bin and ggml-large-v3-turbo-encoder.mlmodelc into Application Support.";
+"alert.runtime_missing_message_both" = "WhisperMac could not find whisper-cli or the default model. It can build whisper-cli locally, download the model, and save both under Application Support.";
+"summary.runtime_missing_cli" = "Bundled whisper-cli not found. This build is incomplete and should be rebuilt with the runtime binary included.";
+"summary.model_assets_missing" = "Model assets not found. WhisperMac can download ggml-large-v3-turbo.bin and the Core ML encoder automatically.";
+"summary.coreml_missing_download" = "GPU + ANE is selected, but the Core ML encoder is missing. WhisperMac can download the required model assets automatically.";
+"summary.runtime_missing_both" = "whisper-cli and the model file are missing. Choose them manually or let WhisperMac download the missing runtime assets.";
 "summary.model_missing" = "Model file not found. Run scripts/prepare-model.sh or choose ggml-large-v3-turbo.bin manually.";
 "summary.mode_gpu_ane" = "Current mode is GPU + ANE: the encoder uses Core ML / ANE and the decoder continues on Metal GPU.";
 "summary.mode_gpu_ane_fallback" = "GPU + ANE is selected, but no Core ML encoder was found. Runtime will fall back to GPU only.";
@@ -45,6 +55,12 @@
 "mode.gpu_ane_detail" = "Use Core ML / ANE for the encoder and Metal GPU for the decoder.";
 "status.preparing_start" = "Preparing…";
 "status.prepare_failed" = "Preparation Failed";
+"status.runtime_preparing_download" = "Preparing runtime download…";
+"status.runtime_downloading_model" = "Downloading default model…";
+"status.runtime_downloading_encoder" = "Downloading Core ML encoder…";
+"status.runtime_extracting_encoder" = "Extracting Core ML encoder…";
+"status.runtime_ready" = "Runtime download completed";
+"status.runtime_download_failed" = "Runtime download failed";
 "status.processing" = "Processing %d/%d";
 "stage.preparing" = "Preparing";
 "stage.extracting_audio" = "Extracting Audio";
@@ -70,6 +86,12 @@
 "log.generated_files" = "Generated files:";
 "log.failed_file" = "Failed: %@";
 "log.completed_summary" = "Finished: %d succeeded, %d failed";
+"log.runtime_download_start" = "Preparing missing runtime assets…";
+"log.runtime_download_component_model" = "Required model assets are missing. WhisperMac will download ggml-large-v3-turbo.bin and the Core ML encoder.";
+"log.runtime_download_source" = "Downloading: %@";
+"log.runtime_download_extract" = "Extracting archive…";
+"log.runtime_download_install" = "Installed: %@";
+"log.runtime_download_complete" = "Runtime download completed.";
 "resolver.note.detected_coreml" = "Core ML encoder detected. GPU + ANE mode will be used.";
 "resolver.note.fallback_pure_gpu" = "No Core ML encoder found. Falling back to GPU only mode.";
 "resolver.note.gpu_only_runtime_link" = "Created a runtime model path without a Core ML companion for GPU only mode.";
@@ -78,6 +100,7 @@
 "error.missing_executable" = "Executable not found: %@";
 "error.failed_to_start" = "Failed to start command: %@";
 "error.non_zero_exit" = "Command failed (%d): %@\n%@";
+"error.invalid_download_response" = "Download failed or returned an unexpected response: %@";
 "error.model_missing" = "Model file does not exist: %@";
 "error.failed_gpu_link" = "Failed to create a GPU-only runtime model link: %@";
 "transcription.prepare_file" = "Preparing file: %@";

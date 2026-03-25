@@ -36,8 +36,11 @@ final class AppModel: ObservableObject {
     @Published var currentFileName = ""
     @Published var currentStageDescription = ""
     @Published var currentTranscriptionProgress = 0.0
+    @Published var isDownloadingRuntime = false
+    @Published var isRuntimeDownloadPromptPresented = false
 
     private let defaults = UserDefaults.standard
+    private var hasPresentedInitialRuntimePrompt = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -52,8 +55,16 @@ final class AppModel: ObservableObject {
         inputFiles = []
         appLanguage = AppLanguage(storedValue: defaults.string(forKey: Keys.appLanguage))
         outputDirectoryPath = defaults.string(forKey: Keys.outputDirectoryPath) ?? ""
-        whisperCLIPath = defaults.string(forKey: Keys.whisperCLIPath) ?? guessed.whisperCLIPath
-        modelPath = defaults.string(forKey: Keys.modelPath) ?? guessed.modelPath
+        let storedWhisperCLIPath = defaults.string(forKey: Keys.whisperCLIPath)
+        let storedModelPath = defaults.string(forKey: Keys.modelPath)
+        whisperCLIPath = PathResolver.preferredExecutablePath(
+            storedValue: storedWhisperCLIPath,
+            guessedValue: guessed.whisperCLIPath
+        )
+        modelPath = PathResolver.preferredFilePath(
+            storedValue: storedModelPath,
+            guessedValue: guessed.modelPath
+        )
         accelerationMode = AccelerationMode(rawValue: storedAccelerationMode ?? "") ?? .gpuAndANE
         outputFormats = selectedFormats
 
@@ -62,6 +73,13 @@ final class AppModel: ObservableObject {
             L.tr("log.audio_preprocessor_switched"),
             L.tr("log.coreml_auto"),
         ]
+
+        if whisperCLIPath != (storedWhisperCLIPath ?? "") {
+            store(whisperCLIPath, forKey: Keys.whisperCLIPath)
+        }
+        if modelPath != (storedModelPath ?? "") {
+            store(modelPath, forKey: Keys.modelPath)
+        }
     }
 
     var logsText: String {
@@ -70,10 +88,16 @@ final class AppModel: ObservableObject {
 
     var canStart: Bool {
         !isRunning &&
+        !isDownloadingRuntime &&
         !inputFiles.isEmpty &&
         !whisperCLIPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        configurationLooksReady &&
         !outputFormats.isEmpty
+    }
+
+    var isBusy: Bool {
+        isRunning || isDownloadingRuntime
     }
 
     var outputDirectoryDisplayText: String {
@@ -88,24 +112,43 @@ final class AppModel: ObservableObject {
     }
 
     var configurationLooksReady: Bool {
-        FileManager.default.fileExists(atPath: PathResolver.expandingTilde(modelPath)) &&
-        !PathResolver.resolveExecutablePath(whisperCLIPath).isEmpty
+        missingRuntimeComponents.isEmpty
+    }
+
+    var missingRuntimeComponents: Set<RuntimeComponent> {
+        runtimeComponentsMissing(whisperCLIPath: whisperCLIPath, modelPath: modelPath)
+    }
+
+    var downloadableRuntimeComponents: Set<RuntimeComponent> {
+        missingRuntimeComponents.subtracting([.whisperCLI])
+    }
+
+    var runtimeDownloadPromptTitle: String {
+        L.tr("alert.runtime_missing_title")
+    }
+
+    var runtimeDownloadPromptMessage: String {
+        downloadableRuntimeComponents.isEmpty ? "" : L.tr("alert.runtime_missing_message_model")
     }
 
     var accelerationSummary: String {
         let modelURL = URL(fileURLWithPath: PathResolver.expandingTilde(modelPath))
         let coreMLURL = OutputPaths.coreMLModelURL(for: modelURL)
+        let hasCLI = !PathResolver.resolveExecutablePath(whisperCLIPath).isEmpty
         let hasModel = FileManager.default.fileExists(atPath: modelURL.path)
         let hasCoreML = FileManager.default.fileExists(atPath: coreMLURL.path)
 
+        if !hasCLI {
+            return L.tr("summary.runtime_missing_cli")
+        }
         if !hasModel {
-            return L.tr("summary.model_missing")
+            return L.tr("summary.model_assets_missing")
+        }
+        if accelerationMode == .gpuAndANE && !hasCoreML {
+            return L.tr("summary.coreml_missing_download")
         }
         if accelerationMode == .gpuAndANE && hasCoreML {
             return L.tr("summary.mode_gpu_ane")
-        }
-        if accelerationMode == .gpuAndANE && !hasCoreML {
-            return L.tr("summary.mode_gpu_ane_fallback")
         }
         if hasCoreML {
             return L.tr("summary.mode_pure_gpu_coreml_present")
@@ -202,7 +245,7 @@ final class AppModel: ObservableObject {
     func refreshLocalizedContent() {
         store(appLanguage.rawValue, forKey: Keys.appLanguage)
 
-        if !isRunning {
+        if !isRunning && !isDownloadingRuntime {
             statusText = ""
             currentStageDescription = ""
             logs = [
@@ -213,6 +256,36 @@ final class AppModel: ObservableObject {
         }
 
         objectWillChange.send()
+    }
+
+    func promptToDownloadMissingRuntimeIfNeeded() {
+        guard !hasPresentedInitialRuntimePrompt else { return }
+        hasPresentedInitialRuntimePrompt = true
+        promptToDownloadMissingRuntime(force: false)
+    }
+
+    func promptToDownloadMissingRuntime(force: Bool) {
+        guard !isDownloadingRuntime else { return }
+        guard !downloadableRuntimeComponents.isEmpty else { return }
+        if force || !isRuntimeDownloadPromptPresented {
+            isRuntimeDownloadPromptPresented = true
+        }
+    }
+
+    func dismissRuntimeDownloadPrompt() {
+        isRuntimeDownloadPromptPresented = false
+    }
+
+    func startRuntimeDownload() {
+        guard !isDownloadingRuntime else { return }
+        let missing = downloadableRuntimeComponents
+        guard !missing.isEmpty else { return }
+
+        isRuntimeDownloadPromptPresented = false
+
+        Task {
+            await downloadMissingRuntime(missing)
+        }
     }
 
     func setFormat(_ format: OutputFormat, enabled: Bool) {
@@ -226,7 +299,10 @@ final class AppModel: ObservableObject {
     }
 
     func startTranscription() {
-        guard canStart else { return }
+        guard canStart else {
+            promptToDownloadMissingRuntime(force: true)
+            return
+        }
 
         let snapshot = AppConfigurationSnapshot(
             inputFiles: inputFiles,
@@ -376,8 +452,61 @@ final class AppModel: ObservableObject {
         isRunning = false
     }
 
+    private func downloadMissingRuntime(_ missing: Set<RuntimeComponent>) async {
+        isDownloadingRuntime = true
+        statusText = L.tr("status.runtime_preparing_download")
+        appendLog(L.tr("log.runtime_download_start"))
+
+        do {
+            let result = try await RuntimeInstaller.install(missing: missing) { [weak self] event in
+                await MainActor.run {
+                    guard let self else { return }
+                    switch event {
+                    case .status(let status):
+                        self.statusText = status
+                    case .log(let line):
+                        self.appendLog(line)
+                    }
+                }
+            }
+
+            if let modelPath = result.modelPath {
+                self.modelPath = modelPath
+            }
+
+            statusText = L.tr("status.runtime_ready")
+        } catch {
+            appendLog(error.localizedDescription)
+            statusText = L.tr("status.runtime_download_failed")
+        }
+
+        isDownloadingRuntime = false
+    }
+
     private func appendLog(_ line: String) {
         logs.append(line)
+    }
+
+    private func runtimeComponentsMissing(whisperCLIPath: String, modelPath: String) -> Set<RuntimeComponent> {
+        var missing = Set<RuntimeComponent>()
+
+        if PathResolver.resolveExecutablePath(whisperCLIPath).isEmpty {
+            missing.insert(.whisperCLI)
+        }
+
+        if !FileManager.default.fileExists(atPath: PathResolver.expandingTilde(modelPath)) {
+            missing.insert(.model)
+        }
+
+        if !missing.contains(.model), accelerationMode == .gpuAndANE {
+            let modelURL = URL(fileURLWithPath: PathResolver.expandingTilde(modelPath))
+            let coreMLURL = OutputPaths.coreMLModelURL(for: modelURL)
+            if !FileManager.default.fileExists(atPath: coreMLURL.path) {
+                missing.insert(.coreMLEncoder)
+            }
+        }
+
+        return missing
     }
 
     private func store(_ value: Any, forKey key: String) {
