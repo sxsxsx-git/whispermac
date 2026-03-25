@@ -8,6 +8,7 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 RUNTIME_DIR="$RESOURCES_DIR/runtime"
+ICON_ICNS="$ROOT/Sources/whispermac/Resources/AppIcon.icns"
 
 mkdir -p "$DIST_DIR"
 
@@ -27,9 +28,13 @@ for RESOURCE_BUNDLE in "$BIN_DIR"/*.bundle; do
 done
 shopt -u nullglob
 
-if [ -f "$ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" ]; then
-  cp "$ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" "$RUNTIME_DIR/bin/"
+if [ ! -f "$ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" ]; then
+  echo "Bundled runtime binary is missing: $ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" >&2
+  echo "Run ./scripts/setup-whispercpp.sh first." >&2
+  exit 1
 fi
+
+cp "$ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" "$RUNTIME_DIR/bin/"
 
 if [ -f "$ROOT/Models/ggml-large-v3-turbo.bin" ]; then
   cp "$ROOT/Models/ggml-large-v3-turbo.bin" "$RUNTIME_DIR/Models/"
@@ -59,6 +64,10 @@ if [ -f "$ROOT/THIRD_PARTY_NOTICES.md" ]; then
   cp "$ROOT/THIRD_PARTY_NOTICES.md" "$RESOURCES_DIR/"
 fi
 
+if [ -f "$ICON_ICNS" ]; then
+  cp "$ICON_ICNS" "$RESOURCES_DIR/AppIcon.icns"
+fi
+
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -82,6 +91,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   </array>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleShortVersionString</key>
   <string>0.1.0</string>
   <key>CFBundleVersion</key>

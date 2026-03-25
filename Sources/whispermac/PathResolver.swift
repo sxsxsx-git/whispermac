@@ -10,6 +10,15 @@ enum PathResolver {
         Bundle.main.resourceURL?.appending(path: "runtime")
     }
 
+    static var applicationSupportRoot: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "WhisperMac", directoryHint: .isDirectory)
+    }
+
+    static var downloadedRuntimeRoot: URL {
+        applicationSupportRoot.appending(path: "runtime", directoryHint: .isDirectory)
+    }
+
     static var projectRoot: URL {
         let current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let bundleParent = Bundle.main.bundleURL.deletingLastPathComponent()
@@ -137,22 +146,27 @@ enum PathResolver {
 
     private static func modelSearchDirectories(whisperCLIPath: String?, searchRoots: [URL]?) -> [URL] {
         let roots = candidateRoots(from: searchRoots)
-        let home = FileManager.default.homeDirectoryForCurrentUser
         var directories = [URL]()
-        if let bundledRuntimeRoot {
-            directories.append(bundledRuntimeRoot.appending(path: "Models", directoryHint: .isDirectory))
+
+        if searchRoots == nil {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            if let bundledRuntimeRoot {
+                directories.append(bundledRuntimeRoot.appending(path: "Models", directoryHint: .isDirectory))
+            }
+            directories.append(downloadedRuntimeRoot.appending(path: "Models", directoryHint: .isDirectory))
+            directories.append(contentsOf: [
+                home.appending(path: "Models", directoryHint: .isDirectory),
+                home.appending(path: "Downloads", directoryHint: .isDirectory),
+                home.appending(path: "Documents", directoryHint: .isDirectory),
+                home.appending(path: "Desktop", directoryHint: .isDirectory),
+            ])
         }
+
         directories.append(contentsOf: roots.map { $0.appending(path: "Models", directoryHint: .isDirectory) })
         directories.append(contentsOf: roots.map { $0.appending(path: "models", directoryHint: .isDirectory) })
         directories.append(contentsOf: roots.map { $0.appending(path: ".build-tools/whisper.cpp/models", directoryHint: .isDirectory) })
         directories.append(contentsOf: roots.map { $0.appending(path: "Vendor/whisper.cpp/models", directoryHint: .isDirectory) })
         directories.append(contentsOf: derivedModelDirectories(from: whisperCLIPath))
-        directories.append(contentsOf: [
-            home.appending(path: "Models", directoryHint: .isDirectory),
-            home.appending(path: "Downloads", directoryHint: .isDirectory),
-            home.appending(path: "Documents", directoryHint: .isDirectory),
-            home.appending(path: "Desktop", directoryHint: .isDirectory),
-        ])
         return uniqueDirectories(directories)
     }
 

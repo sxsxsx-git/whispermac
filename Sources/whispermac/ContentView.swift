@@ -22,6 +22,19 @@ struct ContentView: View {
             .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear {
+            model.promptToDownloadMissingRuntimeIfNeeded()
+        }
+        .alert(model.runtimeDownloadPromptTitle, isPresented: $model.isRuntimeDownloadPromptPresented) {
+            Button(L.tr("button.download_runtime")) {
+                model.startRuntimeDownload()
+            }
+            Button(L.tr("button.not_now"), role: .cancel) {
+                model.dismissRuntimeDownloadPrompt()
+            }
+        } message: {
+            Text(model.runtimeDownloadPromptMessage)
+        }
     }
 
     private var header: some View {
@@ -85,7 +98,7 @@ struct ContentView: View {
                     Button(L.tr("button.clear_list")) {
                         model.clearInputFiles()
                     }
-                    .disabled(model.inputFiles.isEmpty || model.isRunning)
+                    .disabled(model.inputFiles.isEmpty || model.isBusy)
                     Spacer()
                     Text(L.tr("label.file_count", model.inputFiles.count))
                         .foregroundStyle(.secondary)
@@ -110,7 +123,7 @@ struct ContentView: View {
                                 model.removeInputFile(url)
                             }
                             .buttonStyle(.borderless)
-                            .disabled(model.isRunning)
+                            .disabled(model.isBusy)
                         }
                         .padding(.vertical, 2)
                     }
@@ -131,7 +144,7 @@ struct ContentView: View {
                     Button(L.tr("button.choose")) {
                         model.chooseOutputDirectory()
                     }
-                    .disabled(model.isRunning)
+                    .disabled(model.isBusy)
                 }
 
                 Text(model.outputDirectoryDisplayText)
@@ -165,7 +178,7 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .disabled(model.isRunning)
+                    .disabled(model.isBusy)
                     .frame(maxWidth: 320, alignment: .leading)
 
                     Spacer()
@@ -192,6 +205,23 @@ struct ContentView: View {
                     .font(.callout)
                     .foregroundStyle(model.configurationLooksReady ? Color.secondary : Color.orange)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if !model.configurationLooksReady || model.isDownloadingRuntime {
+                    HStack(spacing: 12) {
+                        if model.isDownloadingRuntime {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(model.statusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button(L.tr("button.download_runtime")) {
+                                model.promptToDownloadMissingRuntime(force: true)
+                            }
+                        }
+                        Spacer()
+                    }
+                }
             }
         }
     }
@@ -252,7 +282,7 @@ struct ContentView: View {
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
             Button(L.tr("button.choose"), action: action)
-                .disabled(model.isRunning)
+                .disabled(model.isBusy)
         }
     }
 

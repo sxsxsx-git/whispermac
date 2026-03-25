@@ -58,6 +58,12 @@ func resolveWhisperCLIPathDoesNotTreatDirectoryAsExecutable() throws {
 }
 
 @Test
+func bundledCLIShouldNotUseDownloadedRuntimeLocation() {
+    let guessed = PathResolver.guessDefaults().whisperCLIPath
+    #expect(!guessed.contains("/Library/Application Support/WhisperMac/runtime/bin/whisper-cli"))
+}
+
+@Test
 func resolveModelPathSearchesInsideProvidedDirectory() throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
