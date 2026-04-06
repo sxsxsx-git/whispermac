@@ -28,6 +28,11 @@ for RESOURCE_BUNDLE in "$BIN_DIR"/*.bundle; do
 done
 shopt -u nullglob
 
+# Copy .lproj directories directly so Bundle.main can find them in distributed apps.
+for LPROJ_DIR in "$ROOT"/Sources/whispermac/Resources/*.lproj; do
+  rsync -a "$LPROJ_DIR" "$RESOURCES_DIR/"
+done
+
 if [ ! -f "$ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" ]; then
   echo "Bundled runtime binary is missing: $ROOT/.build-tools/whisper.cpp/build/bin/whisper-cli" >&2
   echo "Run ./scripts/setup-whispercpp.sh first." >&2
