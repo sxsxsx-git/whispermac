@@ -296,7 +296,9 @@ struct ContentView: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     ContentView()
         .environmentObject(AppModel())
 }
+#endif
