@@ -17,6 +17,7 @@
 "section.runtime" = "実行環境";
 "label.acceleration_mode" = "アクセラレーションモード";
 "hint.audio_preprocessor" = "音声前処理には macOS 標準の afconvert を使用します。FFmpeg の追加インストールは不要です。";
+"hint.whisper_cli_manual" = "whisper-cli は自動ダウンロードできません。上の「選択…」ボタンで手動指定してください。";
 "button.start_transcription" = "文字起こし開始";
 "button.transcribing" = "文字起こし中…";
 "button.view_readme" = "README を表示";

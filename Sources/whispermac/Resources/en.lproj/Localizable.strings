@@ -17,6 +17,7 @@
 "section.runtime" = "Runtime";
 "label.acceleration_mode" = "Acceleration Mode";
 "hint.audio_preprocessor" = "Audio preprocessing uses the built-in macOS afconvert tool. No FFmpeg installation is required.";
+"hint.whisper_cli_manual" = "whisper-cli cannot be auto-downloaded. Use the Choose… button above to select it manually.";
 "button.start_transcription" = "Start Transcription";
 "button.transcribing" = "Transcribing…";
 "button.view_readme" = "View README";

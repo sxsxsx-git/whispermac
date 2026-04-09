@@ -11,6 +11,9 @@ let package = Package(
     products: [
         .executable(name: "whispermac", targets: ["whispermac"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-testing", from: "0.11.0"),
+    ],
     targets: [
         .executableTarget(
             name: "whispermac",
@@ -20,7 +23,7 @@ let package = Package(
         ),
         .testTarget(
             name: "whispermacTests",
-            dependencies: ["whispermac"]
+            dependencies: ["whispermac", .product(name: "Testing", package: "swift-testing")]
         ),
     ]
 )

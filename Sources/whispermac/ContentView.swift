@@ -21,6 +21,7 @@ struct ContentView: View {
             .padding(.top, 20)
             .padding(.bottom, 24)
         }
+        .id(model.appLanguage)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             model.promptToDownloadMissingRuntimeIfNeeded()
@@ -214,10 +215,14 @@ struct ContentView: View {
                             Text(model.statusText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                        } else {
+                        } else if !model.downloadableRuntimeComponents.isEmpty {
                             Button(L.tr("button.download_runtime")) {
                                 model.promptToDownloadMissingRuntime(force: true)
                             }
+                        } else {
+                            Text(L.tr("hint.whisper_cli_manual"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                         Spacer()
                     }
@@ -296,7 +301,9 @@ struct ContentView: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     ContentView()
         .environmentObject(AppModel())
 }
+#endif
