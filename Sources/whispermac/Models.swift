@@ -3,6 +3,8 @@ import Foundation
 enum OutputFormat: String, CaseIterable, Hashable, Sendable {
     case txt
     case srt
+    case vtt
+    case json
 
     var whisperArgument: String {
         switch self {
@@ -10,7 +12,46 @@ enum OutputFormat: String, CaseIterable, Hashable, Sendable {
             return "-otxt"
         case .srt:
             return "-osrt"
+        case .vtt:
+            return "-ovtt"
+        case .json:
+            return "-oj"
         }
+    }
+}
+
+struct WhisperLanguage: Hashable, Sendable, Identifiable {
+    let code: String
+    let nativeName: String?
+
+    var id: String { code }
+
+    var displayName: String {
+        guard let nativeName else {
+            return L.tr("language.auto")
+        }
+        return nativeName
+    }
+
+    static let autoCode = "auto"
+    static let auto = WhisperLanguage(code: autoCode, nativeName: nil)
+    static let common: [WhisperLanguage] = [
+        WhisperLanguage(code: "en", nativeName: "English"),
+        WhisperLanguage(code: "zh", nativeName: "中文"),
+        WhisperLanguage(code: "ja", nativeName: "日本語"),
+        WhisperLanguage(code: "ko", nativeName: "한국어"),
+        WhisperLanguage(code: "de", nativeName: "Deutsch"),
+        WhisperLanguage(code: "fr", nativeName: "Français"),
+        WhisperLanguage(code: "es", nativeName: "Español"),
+        WhisperLanguage(code: "ru", nativeName: "Русский"),
+        WhisperLanguage(code: "pt", nativeName: "Português"),
+        WhisperLanguage(code: "it", nativeName: "Italiano"),
+        WhisperLanguage(code: "ar", nativeName: "العربية"),
+        WhisperLanguage(code: "hi", nativeName: "हिन्दी"),
+    ]
+
+    static func isSupported(_ code: String) -> Bool {
+        code == autoCode || common.contains { $0.code == code }
     }
 }
 

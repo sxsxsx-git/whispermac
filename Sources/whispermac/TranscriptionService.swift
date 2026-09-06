@@ -1,61 +1,81 @@
 import Foundation
 
+struct BatchTranscriptionInput: Sendable {
+    let inputURL: URL
+    let outputDirectory: URL
+}
+
 struct TranscriptionService {
     private let audioPreprocessorPath = "/usr/bin/afconvert"
 
-    func transcribe(
-        inputURL: URL,
-        outputDirectory: URL,
+    func transcribeBatch(
+        inputs: [BatchTranscriptionInput],
         whisperCLIPath: String,
         modelPath: String,
         formats: Set<OutputFormat>,
+        sourceLanguage: String,
+        translatesToEnglish: Bool,
+        onInputStageChange: @escaping @Sendable (Int, TranscriptionStage) async -> Void,
         onStageChange: @escaping @Sendable (TranscriptionStage) async -> Void,
         onLog: @escaping @Sendable (String) async -> Void,
-        onTranscriptionProgress: @escaping @Sendable (Double) async -> Void
-    ) async throws -> TranscriptionReport {
-        let startedAt = Date()
-        await onStageChange(.preparing)
-        await onLog(L.tr("transcription.prepare_file", inputURL.path))
-        await onLog(L.tr("transcription.output_directory", outputDirectory.path))
-        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true, attributes: nil)
+        onTranscriptionProgress: @escaping @Sendable (Double) async -> Void,
+        onSegment: (@Sendable (TranscriptSegment) async -> Void)? = nil
+    ) async throws -> [TranscriptionReport] {
+        guard !inputs.isEmpty else { return [] }
 
-        let wavURL = OutputPaths.temporaryWAVURL(for: inputURL)
-        defer {
-            try? FileManager.default.removeItem(at: wavURL)
+        let startedAt = Date()
+        await onLog(L.tr("transcription.start_audio_prep"))
+        for directory in Set(inputs.map(\.outputDirectory)) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
         }
 
-        let audioPreparationArguments = [
-            "-f", "WAVE",
-            "-d", "LEI16@16000",
-            "-c", "1",
-            inputURL.path,
-            wavURL.path,
-        ]
-
-        await onStageChange(.extractingAudio)
-        await onLog(L.tr("transcription.start_audio_prep"))
-        let audioPreparationStartedAt = Date()
-        let audioPreparationResult = try await ShellCommand.run(
-            executable: audioPreprocessorPath,
-            arguments: audioPreparationArguments,
-            onOutput: { stream, line in
-                guard let filtered = CommandLogFilter.filteredLine(for: stream, tool: .audioPreprocessor, line: line) else {
-                    return
-                }
-                await onLog("[afconvert \(stream.label)] \(filtered)")
+        let wavURLs = inputs.map { OutputPaths.temporaryWAVURL(for: $0.inputURL) }
+        defer {
+            for wavURL in wavURLs {
+                try? FileManager.default.removeItem(at: wavURL)
             }
-        )
+        }
+
+        var audioPreparationCommands: [String] = []
+        audioPreparationCommands.reserveCapacity(inputs.count)
+        let audioPreparationStartedAt = Date()
+        for (index, input) in inputs.enumerated() {
+            await onInputStageChange(index, .preparing)
+            await onLog(L.tr("transcription.prepare_file", input.inputURL.path))
+            await onInputStageChange(index, .extractingAudio)
+
+            let audioPreparationArguments = [
+                "-f", "WAVE",
+                "-d", "LEI16@16000",
+                "-c", "1",
+                input.inputURL.path,
+                wavURLs[index].path,
+            ]
+            let audioPreparationResult = try await ShellCommand.run(
+                executable: audioPreprocessorPath,
+                arguments: audioPreparationArguments,
+                onOutput: { stream, line in
+                    guard let filtered = CommandLogFilter.filteredLine(for: stream, tool: .audioPreprocessor, line: line) else {
+                        return
+                    }
+                    await onLog("[afconvert \(stream.label)] \(filtered)")
+                }
+            )
+            audioPreparationCommands.append(audioPreparationResult.command)
+        }
         await onLog(L.tr("transcription.audio_prep_finished", Date().timeIntervalSince(audioPreparationStartedAt)))
 
-        let outputPrefix = OutputPaths.outputPrefixURL(for: inputURL, outputDirectory: outputDirectory)
-        var whisperArguments = [
-            "-m", PathResolver.expandingTilde(modelPath),
-            "-f", wavURL.path,
-            "-l", "auto",
-            "-of", outputPrefix.path,
-            "-pp",
-        ]
-        whisperArguments.append(contentsOf: formats.sorted { $0.rawValue < $1.rawValue }.map(\.whisperArgument))
+        let outputPrefixes = await Self.uniqueOutputPrefixes(for: inputs, formats: formats) { name in
+            await onLog(L.tr("log.output_renamed", name))
+        }
+        let whisperArguments = WhisperInvocation.arguments(
+            modelPath: modelPath,
+            wavPaths: wavURLs.map(\.path),
+            outputPrefixes: outputPrefixes.map(\.path),
+            formats: formats,
+            sourceLanguage: sourceLanguage,
+            translatesToEnglish: translatesToEnglish
+        )
 
         await onStageChange(.transcribing)
         await onLog(L.tr("transcription.start_whisper"))
@@ -64,6 +84,9 @@ struct TranscriptionService {
             executable: whisperCLIPath,
             arguments: whisperArguments,
             onOutput: { stream, line in
+                if stream == .stdout, let segment = LiveSegmentParser.parse(line) {
+                    await onSegment?(segment)
+                }
                 guard let filtered = CommandLogFilter.filteredLine(for: stream, tool: .whisper, line: line) else {
                     return
                 }
@@ -76,14 +99,44 @@ struct TranscriptionService {
         await onLog(L.tr("transcription.whisper_finished", Date().timeIntervalSince(whisperStartedAt)))
         await onStageChange(.finished)
 
-        let outputFiles = OutputPaths.outputFiles(for: inputURL, outputDirectory: outputDirectory, formats: formats)
-        await onLog(L.tr("transcription.file_total_time", Date().timeIntervalSince(startedAt)))
+        var reports: [TranscriptionReport] = []
+        reports.reserveCapacity(inputs.count)
+        for index in inputs.indices {
+            let outputFiles = OutputPaths.outputFiles(prefix: outputPrefixes[index], formats: formats)
+            reports.append(TranscriptionReport(
+                audioPreparationCommand: audioPreparationCommands[index],
+                whisperCommand: whisperResult.command,
+                outputFiles: outputFiles.filter { FileManager.default.fileExists(atPath: $0.path) }
+            ))
+        }
+        await onLog(L.tr("transcription.batch_total_time", Date().timeIntervalSince(startedAt)))
 
-        return TranscriptionReport(
-            audioPreparationCommand: audioPreparationResult.command,
-            whisperCommand: whisperResult.command,
-            outputFiles: outputFiles.filter { FileManager.default.fileExists(atPath: $0.path) }
-        )
+        return reports
+    }
+
+    static func uniqueOutputPrefixes(
+        for inputs: [BatchTranscriptionInput],
+        formats: Set<OutputFormat>,
+        onBump: @escaping @Sendable (String) async -> Void
+    ) async -> [URL] {
+        var takenPrefixes: Set<String> = []
+        var prefixes: [URL] = []
+        prefixes.reserveCapacity(inputs.count)
+        for input in inputs {
+            let basePrefix = OutputPaths.outputPrefixURL(for: input.inputURL, outputDirectory: input.outputDirectory)
+            let prefix = OutputPaths.uniqueOutputPrefix(
+                for: input.inputURL,
+                outputDirectory: input.outputDirectory,
+                formats: formats,
+                takenPrefixes: takenPrefixes
+            )
+            if prefix.lastPathComponent != basePrefix.lastPathComponent {
+                await onBump(prefix.lastPathComponent)
+            }
+            takenPrefixes.insert(prefix.path)
+            prefixes.append(prefix)
+        }
+        return prefixes
     }
 
     private func parseWhisperProgress(from line: String) -> Double? {

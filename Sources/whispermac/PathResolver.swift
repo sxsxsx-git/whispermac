@@ -4,7 +4,19 @@ enum PathResolver {
     private static let preferredModelFileNames = [
         "ggml-large-v3-turbo.bin",
     ]
+    /// Depth limit for recursive enumeration inside a directory the user
+    /// explicitly pointed at. Automatic search directories are only ever
+    /// checked non-recursively.
     private static let maxModelSearchDepth = 4
+
+    private static let modelPathCache = ResolutionCache()
+
+    /// Drops all cached resolution results. Call whenever the filesystem may
+    /// have changed underneath an unchanged input: after the user manually
+    /// picks a path, and after the runtime installer places new files.
+    static func invalidateCaches() {
+        modelPathCache.invalidateAll()
+    }
 
     static var bundledRuntimeRoot: URL? {
         Bundle.main.resourceURL?.appending(path: "runtime")
@@ -58,15 +70,39 @@ enum PathResolver {
     }
 
     static func resolveModelPath(_ value: String, whisperCLIPath: String? = nil, searchRoots: [URL]? = nil) -> String {
+        let key = ResolutionCache.Key(
+            input: value,
+            whisperCLIPath: whisperCLIPath,
+            searchRoots: searchRoots?.map(\.path)
+        )
+        if let cached = modelPathCache.cachedValue(for: key) {
+            return cached
+        }
+
+        let resolved = resolveModelPathUncached(value, whisperCLIPath: whisperCLIPath, searchRoots: searchRoots)
+        modelPathCache.store(resolved, for: key)
+        return resolved
+    }
+
+    /// `resolveModelPath` minus the cache wrapper.
+    ///
+    /// Directories the user explicitly pointed at (the value's directory or
+    /// its parent) keep recursive search; automatic search directories are
+    /// only checked for exact/preferred file names directly inside them, so
+    /// resolution never enumerates large directory trees. Only exact or
+    /// preferred names match — arbitrary ggml-*.bin files are never guessed.
+    private static func resolveModelPathUncached(_ value: String, whisperCLIPath: String?, searchRoots: [URL]?) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let expanded = expandingTilde(trimmed)
+        let names = preferredModelNames(for: trimmed)
 
         var isDirectory: ObjCBool = false
         if !trimmed.isEmpty && FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory) {
             if isDirectory.boolValue {
                 if let discovered = firstModelPath(
                     in: [URL(fileURLWithPath: expanded, isDirectory: true)],
-                    preferredFileNames: preferredModelNames(for: trimmed)
+                    preferredFileNames: names,
+                    recursive: true
                 ) {
                     return discovered
                 }
@@ -75,15 +111,13 @@ enum PathResolver {
             }
         }
 
-        let searchDirectories = uniqueDirectories(
-            requestedSearchDirectories(for: trimmed) +
-            modelSearchDirectories(whisperCLIPath: whisperCLIPath, searchRoots: searchRoots)
-        )
+        let requestedDirectories = requestedSearchDirectories(for: trimmed)
+        if let discovered = firstModelPath(in: requestedDirectories, preferredFileNames: names, recursive: true) {
+            return discovered
+        }
 
-        if let discovered = firstModelPath(
-            in: searchDirectories,
-            preferredFileNames: preferredModelNames(for: trimmed)
-        ) {
+        let automaticDirectories = modelSearchDirectories(whisperCLIPath: whisperCLIPath, searchRoots: searchRoots)
+        if let discovered = firstModelPath(in: automaticDirectories, preferredFileNames: names, recursive: false) {
             return discovered
         }
 
@@ -144,22 +178,23 @@ enum PathResolver {
         return FileManager.default.fileExists(atPath: parent.path) ? [parent] : []
     }
 
-    private static func modelSearchDirectories(whisperCLIPath: String?, searchRoots: [URL]?) -> [URL] {
+    /// Directories searched automatically when the stored value does not point
+    /// at a model: bundled runtime Models, the app's downloaded runtime Models,
+    /// dev-layout roots, and directories derived from the whisper-cli
+    /// location. Home directories (~/Models, ~/Downloads, ~/Documents,
+    /// ~/Desktop) are deliberately absent: enumerating them is far too
+    /// expensive for launch-time resolution and invites silently guessing at
+    /// unrelated ggml-*.bin files. Users point at such models explicitly via
+    /// the file picker instead.
+    static func modelSearchDirectories(whisperCLIPath: String?, searchRoots: [URL]?) -> [URL] {
         let roots = candidateRoots(from: searchRoots)
         var directories = [URL]()
 
         if searchRoots == nil {
-            let home = FileManager.default.homeDirectoryForCurrentUser
             if let bundledRuntimeRoot {
                 directories.append(bundledRuntimeRoot.appending(path: "Models", directoryHint: .isDirectory))
             }
             directories.append(downloadedRuntimeRoot.appending(path: "Models", directoryHint: .isDirectory))
-            directories.append(contentsOf: [
-                home.appending(path: "Models", directoryHint: .isDirectory),
-                home.appending(path: "Downloads", directoryHint: .isDirectory),
-                home.appending(path: "Documents", directoryHint: .isDirectory),
-                home.appending(path: "Desktop", directoryHint: .isDirectory),
-            ])
         }
 
         directories.append(contentsOf: roots.map { $0.appending(path: "Models", directoryHint: .isDirectory) })
@@ -207,7 +242,12 @@ enum PathResolver {
         return name
     }
 
-    private static func firstModelPath(in directories: [URL], preferredFileNames: [String]) -> String? {
+    /// - Parameters:
+    ///   - recursive: when true, directories are also enumerated (bounded by
+    ///     `maxModelSearchDepth`) to find exact names nested deeper inside.
+    ///     Reserved for directories the user explicitly designated; automatic
+    ///     search directories only get the direct, non-recursive check.
+    private static func firstModelPath(in directories: [URL], preferredFileNames: [String], recursive: Bool) -> String? {
         let exactNames = uniqueValues(preferredFileNames.filter { !$0.isEmpty })
 
         for directory in directories {
@@ -219,14 +259,10 @@ enum PathResolver {
             }
         }
 
-        for directory in directories {
-            if let discovered = firstMatchingModelPath(in: directory, exactNames: exactNames, allowFallbackMatches: false) {
-                return discovered
-            }
-        }
+        guard recursive else { return nil }
 
         for directory in directories {
-            if let discovered = firstMatchingModelPath(in: directory, exactNames: [], allowFallbackMatches: true) {
+            if let discovered = firstMatchingModelPath(in: directory, exactNames: exactNames) {
                 return discovered
             }
         }
@@ -234,7 +270,10 @@ enum PathResolver {
         return nil
     }
 
-    private static func firstMatchingModelPath(in directory: URL, exactNames: [String], allowFallbackMatches: Bool) -> String? {
+    /// Recursive exact-name search inside a user-designated directory. Only
+    /// exact/preferred file names match; there is deliberately no
+    /// any-ggml-*.bin fallback pass.
+    private static func firstMatchingModelPath(in directory: URL, exactNames: [String]) -> String? {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             return nil
@@ -262,21 +301,12 @@ enum PathResolver {
                 continue
             }
 
-            let fileName = url.lastPathComponent
-            if exactNames.contains(fileName) {
-                return url.path
-            }
-            if allowFallbackMatches && isCandidateModelFileName(fileName) {
+            if exactNames.contains(url.lastPathComponent) {
                 return url.path
             }
         }
 
         return nil
-    }
-
-    private static func isCandidateModelFileName(_ value: String) -> Bool {
-        let lowercase = value.lowercased()
-        return lowercase.hasPrefix("ggml-") && lowercase.hasSuffix(".bin")
     }
 
     private static func firstExecutablePath(_ values: [String]) -> String {
@@ -304,6 +334,57 @@ enum PathResolver {
         var seen = Set<String>()
         return values.filter { value in
             !value.isEmpty && seen.insert(value).inserted
+        }
+    }
+}
+
+/// Memo for synchronous path resolution, so repeated computed-property calls
+/// (`canStart`, `accelerationSummary`, …) do not re-query the filesystem.
+/// PathResolver exposes only synchronous static functions called from the main
+/// actor, so an actor is not an option; every access goes through `lock`,
+/// which makes the mutable storage safe (@unchecked Sendable).
+/// Correctness over cleverness: bounded capacity with FIFO eviction, and a
+/// single trivially-reliable `invalidateAll()`.
+private final class ResolutionCache: @unchecked Sendable {
+    struct Key: Hashable {
+        let input: String
+        let whisperCLIPath: String?
+        let searchRoots: [String]?
+
+        init(input: String, whisperCLIPath: String?, searchRoots: [String]?) {
+            // Normalize so semantically identical calls share one entry.
+            self.input = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.whisperCLIPath = whisperCLIPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.searchRoots = searchRoots?.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+    }
+
+    private static let capacity = 16
+
+    private let lock = NSLock()
+    private var storage: [Key: String] = [:]
+    private var insertionOrder: [Key] = []
+
+    func cachedValue(for key: Key) -> String? {
+        lock.withLock { storage[key] }
+    }
+
+    func store(_ value: String, for key: Key) {
+        lock.withLock {
+            if storage[key] == nil {
+                insertionOrder.append(key)
+            }
+            storage[key] = value
+            if insertionOrder.count > Self.capacity {
+                storage.removeValue(forKey: insertionOrder.removeFirst())
+            }
+        }
+    }
+
+    func invalidateAll() {
+        lock.withLock {
+            storage.removeAll()
+            insertionOrder.removeAll()
         }
     }
 }

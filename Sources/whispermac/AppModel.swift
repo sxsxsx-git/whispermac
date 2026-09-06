@@ -28,8 +28,15 @@ final class AppModel: ObservableObject {
     @Published var outputFormats: Set<OutputFormat> {
         didSet { store(Array(outputFormats).map(\.rawValue).sorted(), forKey: Keys.outputFormats) }
     }
+    @Published var sourceLanguage: String {
+        didSet { store(sourceLanguage, forKey: Keys.sourceLanguage) }
+    }
+    @Published var translatesToEnglish: Bool {
+        didSet { store(translatesToEnglish, forKey: Keys.translatesToEnglish) }
+    }
     @Published var logs: [String]
     @Published var isRunning = false
+    @Published var isCancelling = false
     @Published var statusText = ""
     @Published var overallProgress = 0.0
     @Published var currentFileProgress = 0.0
@@ -38,11 +45,26 @@ final class AppModel: ObservableObject {
     @Published var currentTranscriptionProgress = 0.0
     @Published var isDownloadingRuntime = false
     @Published var isRuntimeDownloadPromptPresented = false
+    @Published var downloadedBytes: Int64 = 0
+    @Published var downloadTotalBytes: Int64?
+    @Published private(set) var previewFiles: [TranscriptPreviewFile] = []
+    @Published private(set) var selectedPreviewFileID: URL?
+    @Published private(set) var previewSegments: [TranscriptSegment] = []
+    @Published private(set) var isLoadingPreview = false
+    @Published private(set) var liveSegments: [TranscriptSegment] = []
+    @Published private(set) var historyEntries: [HistoryEntry] = []
 
     private let defaults = UserDefaults.standard
     private var hasPresentedInitialRuntimePrompt = false
+    private var transcriptionTask: Task<Void, Never>?
+    private var runtimeDownloadTask: Task<Void, Never>?
+    private var previewLoadGeneration = 0
+    private lazy var historyStore = TranscriptionHistoryStore()
+    private let completionNotifier: CompletionNotifier
+    private var keepAwakeToken: KeepAwakeToken?
 
-    init() {
+    init(completionNotifier: CompletionNotifier = CompletionNotifier()) {
+        self.completionNotifier = completionNotifier
         let defaults = UserDefaults.standard
         let guessed = PathResolver.guessDefaults()
         let storedWhisperCLIPath = defaults.string(forKey: Keys.whisperCLIPath) ?? ""
@@ -61,6 +83,10 @@ final class AppModel: ObservableObject {
         if selectedFormats.isEmpty {
             selectedFormats = [.txt, .srt]
         }
+        let storedSourceLanguage = defaults.string(forKey: Keys.sourceLanguage) ?? WhisperLanguage.autoCode
+        let initialSourceLanguage = WhisperLanguage.isSupported(storedSourceLanguage)
+            ? storedSourceLanguage
+            : WhisperLanguage.autoCode
 
         inputFiles = []
         appLanguage = AppLanguage(storedValue: defaults.string(forKey: Keys.appLanguage))
@@ -69,6 +95,8 @@ final class AppModel: ObservableObject {
         modelPath = initialModelPath
         accelerationMode = AccelerationMode(rawValue: storedAccelerationMode ?? "") ?? .gpuAndANE
         outputFormats = selectedFormats
+        sourceLanguage = initialSourceLanguage
+        translatesToEnglish = defaults.bool(forKey: Keys.translatesToEnglish)
 
         logs = [
             L.tr("log.default_model"),
@@ -76,12 +104,11 @@ final class AppModel: ObservableObject {
             L.tr("log.coreml_auto"),
         ]
 
-        if whisperCLIPath != storedWhisperCLIPath {
-            store(whisperCLIPath, forKey: Keys.whisperCLIPath)
-        }
-        if modelPath != storedModelPath {
-            store(modelPath, forKey: Keys.modelPath)
-        }
+        // Resolution stays a runtime overlay: UserDefaults only ever holds what
+        // the user explicitly picked, so a launch-time guess is never silently
+        // persisted over the stored setting.
+
+        loadHistoryFromStore()
     }
 
     var logsText: String {
@@ -98,6 +125,11 @@ final class AppModel: ObservableObject {
             !resolvedWhisperCLIPath.isEmpty &&
             !resolvedModelPath.isEmpty &&
             !outputFormats.isEmpty
+    }
+
+    var downloadProgress: Double? {
+        guard let totalBytes = downloadTotalBytes, totalBytes > 0, downloadedBytes > 0 else { return nil }
+        return min(Double(downloadedBytes) / Double(totalBytes), 1.0)
     }
 
     var isBusy: Bool {
@@ -180,13 +212,16 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = true
 
         guard panel.runModal() == .OK else { return }
-        let additions = panel.urls.filter { PanelHelper.supportsFile($0) }
+        addMediaURLs(panel.urls)
+    }
 
-        for url in additions where !inputFiles.contains(url) {
-            inputFiles.append(url)
-        }
+    func addMediaURLs(_ urls: [URL]) {
+        let additions = PanelHelper.mediaFileAdditions(from: urls, existing: inputFiles)
+        guard !additions.isEmpty else { return }
 
-        if !additions.isEmpty && outputDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        inputFiles.append(contentsOf: additions)
+
+        if outputDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             outputDirectoryPath = ""
         }
     }
@@ -214,6 +249,7 @@ final class AppModel: ObservableObject {
     func chooseWhisperCLI() {
         if let url = PanelHelper.chooseBinary() {
             whisperCLIPath = url.path
+            PathResolver.invalidateCaches()
         }
     }
 
@@ -227,6 +263,7 @@ final class AppModel: ObservableObject {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         modelPath = url.path
+        PathResolver.invalidateCaches()
     }
 
     func openOutputDirectory() {
@@ -290,9 +327,14 @@ final class AppModel: ObservableObject {
 
         isRuntimeDownloadPromptPresented = false
 
-        Task {
-            await downloadMissingRuntime(missing)
+        runtimeDownloadTask = Task { [weak self] in
+            await self?.downloadMissingRuntime(missing)
         }
+    }
+
+    func cancelRuntimeDownload() {
+        guard isDownloadingRuntime else { return }
+        runtimeDownloadTask?.cancel()
     }
 
     func setFormat(_ format: OutputFormat, enabled: Bool) {
@@ -320,16 +362,30 @@ final class AppModel: ObservableObject {
             whisperCLIPath: resolvedWhisperCLIPath,
             modelPath: resolvedModelPath,
             accelerationMode: accelerationMode,
-            outputFormats: outputFormats
+            outputFormats: outputFormats,
+            sourceLanguage: sourceLanguage,
+            translatesToEnglish: translatesToEnglish
         )
 
-        Task {
+        transcriptionTask = Task {
             await runTranscription(snapshot)
         }
     }
 
+    func cancelTranscription() {
+        guard isRunning, !isCancelling else { return }
+        isCancelling = true
+        transcriptionTask?.cancel()
+    }
+
     private func runTranscription(_ snapshot: AppConfigurationSnapshot) async {
         isRunning = true
+        keepAwakeToken = KeepAwakeController.acquire(reason: KeepAwakeController.batchReason)
+        let notifier = completionNotifier
+        Task { await notifier.prepareForRun() }
+        let runStartedAt = Date()
+        clearPreviews()
+        liveSegments = []
         logs.removeAll()
         statusText = L.tr("status.preparing_start")
         overallProgress = 0
@@ -342,6 +398,7 @@ final class AppModel: ObservableObject {
         let modelPlan: RuntimeModelPlan
         var successCount = 0
         var failureCount = 0
+        var wasCancelled = false
 
         do {
             modelPlan = try RuntimeModelResolver.prepare(
@@ -351,7 +408,7 @@ final class AppModel: ObservableObject {
         } catch {
             appendLog(error.localizedDescription)
             statusText = L.tr("status.prepare_failed")
-            isRunning = false
+            await finishTranscriptionRun(failureCount: snapshot.inputFiles.count)
             return
         }
 
@@ -373,97 +430,288 @@ final class AppModel: ObservableObject {
         }
         appendLog(L.tr("log.output_formats", snapshot.outputFormats.map(\.rawValue).sorted().joined(separator: ", ")))
 
-        for (index, inputURL) in snapshot.inputFiles.enumerated() {
-            statusText = L.tr("status.processing", index + 1, snapshot.inputFiles.count)
-            currentFileName = inputURL.lastPathComponent
-            currentFileProgress = 0
-            currentStageDescription = TranscriptionStage.preparing.description
-            currentTranscriptionProgress = 0
-            let resolvedOutputDirectory = URL(fileURLWithPath: resolvedOutputDirectoryPath(for: inputURL, overridePath: snapshot.outputDirectoryPath))
+        let totalFiles = snapshot.inputFiles.count
+        let batchInputs = snapshot.inputFiles.map { inputURL in
+            BatchTranscriptionInput(
+                inputURL: inputURL,
+                outputDirectory: URL(fileURLWithPath: resolvedOutputDirectoryPath(for: inputURL, overridePath: snapshot.outputDirectoryPath))
+            )
+        }
 
-            do {
-                let report = try await service.transcribe(
-                    inputURL: inputURL,
-                    outputDirectory: resolvedOutputDirectory,
-                    whisperCLIPath: snapshot.whisperCLIPath,
-                    modelPath: modelPlan.executionModelPath,
-                    formats: snapshot.outputFormats,
-                    onStageChange: { [weak self] stage in
-                        await MainActor.run {
-                            guard let self else { return }
-                            switch stage {
-                            case .preparing:
-                                self.currentStageDescription = stage.description
-                                self.currentFileProgress = 0.03
-                            case .extractingAudio:
-                                self.currentStageDescription = stage.description
-                                self.currentFileProgress = max(self.currentFileProgress, 0.12)
-                            case .transcribing:
-                                self.currentStageDescription = self.currentTranscriptionProgress > 0
-                                    ? L.tr("stage.transcribing_progress", Int(self.currentTranscriptionProgress * 100))
-                                    : stage.description
-                                self.currentFileProgress = max(self.currentFileProgress, 0.18)
-                            case .finished:
-                                self.currentStageDescription = stage.description
-                                self.currentTranscriptionProgress = 1
-                                self.currentFileProgress = 1
-                            }
-                            let completedFiles = Double(index)
-                            let totalFiles = Double(snapshot.inputFiles.count)
-                            self.overallProgress = min((completedFiles + self.currentFileProgress) / totalFiles, 1.0)
+        do {
+            let reports = try await service.transcribeBatch(
+                inputs: batchInputs,
+                whisperCLIPath: snapshot.whisperCLIPath,
+                modelPath: modelPlan.executionModelPath,
+                formats: snapshot.outputFormats,
+                sourceLanguage: snapshot.sourceLanguage,
+                translatesToEnglish: snapshot.translatesToEnglish,
+                onInputStageChange: { [weak self] index, stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.statusText = L.tr("status.processing", index + 1, totalFiles)
+                        self.currentFileName = snapshot.inputFiles[index].lastPathComponent
+                        switch stage {
+                        case .preparing:
+                            self.currentStageDescription = stage.description
+                            self.currentFileProgress = 0.03
+                        case .extractingAudio:
+                            self.currentStageDescription = stage.description
+                            self.currentFileProgress = max(self.currentFileProgress, 0.12)
+                        default:
+                            break
                         }
-                    },
-                    onLog: { [weak self] line in
-                        await MainActor.run {
-                            self?.appendLog(line)
-                        }
-                    },
-                    onTranscriptionProgress: { [weak self] progress in
-                        await MainActor.run {
-                            guard let self else { return }
-                            self.currentTranscriptionProgress = progress
-                            self.currentStageDescription = L.tr("stage.transcribing_progress", Int(progress * 100))
-                            self.currentFileProgress = max(0.18, 0.18 + 0.82 * progress)
-                            let completedFiles = Double(index)
-                            let totalFiles = Double(snapshot.inputFiles.count)
-                            self.overallProgress = min((completedFiles + self.currentFileProgress) / totalFiles, 1.0)
+                        let preparationProgress = min((Double(index) + self.currentFileProgress) / Double(totalFiles), 1.0)
+                        self.overallProgress = preparationProgress * 0.18
+                    }
+                },
+                onStageChange: { [weak self] stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        switch stage {
+                        case .transcribing:
+                            self.statusText = L.tr("stage.transcribing_batch", totalFiles)
+                            self.currentFileName = ""
+                            self.currentStageDescription = stage.description
+                            self.currentFileProgress = max(self.currentFileProgress, 0.18)
+                        case .finished:
+                            self.currentStageDescription = stage.description
+                            self.currentTranscriptionProgress = 1
+                            self.currentFileProgress = 1
+                            self.overallProgress = 1
+                        default:
+                            break
                         }
                     }
-                )
+                },
+                onLog: { [weak self] line in
+                    await MainActor.run {
+                        self?.appendLog(line)
+                    }
+                },
+                onTranscriptionProgress: { [weak self] progress in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.currentTranscriptionProgress = progress
+                        self.currentStageDescription = L.tr("stage.transcribing_progress", Int(progress * 100))
+                        self.currentFileProgress = max(0.18, 0.18 + 0.82 * progress)
+                        self.overallProgress = min(0.18 + 0.82 * progress, 1.0)
+                    }
+                },
+                onSegment: { [weak self] segment in
+                    await MainActor.run {
+                        self?.appendLiveSegment(segment)
+                    }
+                }
+            )
 
-                successCount += 1
-                appendLog(L.tr("log.completed_file", inputURL.lastPathComponent))
-                appendLog(L.tr("log.output_directory", resolvedOutputDirectory.path))
+            successCount = totalFiles
+            if let whisperCommand = reports.first?.whisperCommand {
+                appendLog(L.tr("log.whisper_command", whisperCommand))
+            }
+            for (index, report) in reports.enumerated() {
+                appendLog(L.tr("log.completed_file", snapshot.inputFiles[index].lastPathComponent))
+                appendLog(L.tr("log.output_directory", batchInputs[index].outputDirectory.path))
                 appendLog(L.tr("log.audio_preparation_command", report.audioPreparationCommand))
-                appendLog(L.tr("log.whisper_command", report.whisperCommand))
-
                 if !report.outputFiles.isEmpty {
                     appendLog(L.tr("log.generated_files"))
                     for outputFile in report.outputFiles {
                         appendLog("  \(outputFile.path)")
                     }
                 }
-            } catch {
-                failureCount += 1
-                currentFileProgress = 1
-                currentStageDescription = L.tr("stage.failed")
-                appendLog(L.tr("log.failed_file", inputURL.lastPathComponent))
-                appendLog(error.localizedDescription)
             }
-
-            overallProgress = Double(index + 1) / Double(snapshot.inputFiles.count)
-            appendLog(String(repeating: "-", count: 72))
+            installPreviewFiles(from: reports, inputs: batchInputs)
+            recordHistoryEntries(
+                reports: reports,
+                inputFiles: snapshot.inputFiles,
+                outputDirectories: batchInputs.map(\.outputDirectory),
+                durationSeconds: Date().timeIntervalSince(runStartedAt)
+            )
+        } catch is CancellationError {
+            wasCancelled = true
+            appendLog(L.tr("log.cancelled"))
+        } catch {
+            failureCount = totalFiles
+            currentFileProgress = 1
+            currentStageDescription = L.tr("stage.failed")
+            appendLog(L.tr("log.failed_batch"))
+            appendLog(error.localizedDescription)
         }
 
-        statusText = L.tr("log.completed_summary", successCount, failureCount)
-        currentStageDescription = failureCount == 0 ? L.tr("stage.all_done") : L.tr("stage.processing_finished")
-        currentFileProgress = snapshot.inputFiles.isEmpty ? 0 : 1
-        overallProgress = snapshot.inputFiles.isEmpty ? 0 : 1
+        appendLog(String(repeating: "-", count: 72))
+
+        if wasCancelled {
+            statusText = L.tr("status.cancelled")
+            currentStageDescription = L.tr("status.cancelled")
+        } else {
+            statusText = L.tr("log.completed_summary", successCount, failureCount)
+            currentStageDescription = failureCount == 0 ? L.tr("stage.all_done") : L.tr("stage.processing_finished")
+            currentFileProgress = snapshot.inputFiles.isEmpty ? 0 : 1
+            overallProgress = snapshot.inputFiles.isEmpty ? 0 : 1
+        }
+        await finishTranscriptionRun(
+            successCount: successCount,
+            failureCount: failureCount,
+            wasCancelled: wasCancelled
+        )
+    }
+
+    private func installPreviewFiles(from reports: [TranscriptionReport], inputs: [BatchTranscriptionInput]) {
+        var files: [TranscriptPreviewFile] = []
+        files.reserveCapacity(reports.count)
+        for (index, report) in reports.enumerated() {
+            guard index < inputs.count else { continue }
+            let displayName = inputs[index].inputURL.lastPathComponent
+            for output in report.outputFiles where output.pathExtension.lowercased() == "srt" {
+                files.append(TranscriptPreviewFile(id: output, url: output, displayName: displayName))
+            }
+        }
+        guard let last = files.last else { return }
+        previewFiles = files
+        selectedPreviewFileID = last.id
+        loadPreviewSegments(for: last.id)
+    }
+
+    func selectPreviewFile(id: URL?) {
+        guard id != selectedPreviewFileID else { return }
+        selectedPreviewFileID = id
+        loadPreviewSegments(for: id)
+    }
+
+    private func loadPreviewSegments(for fileID: URL?) {
+        previewLoadGeneration += 1
+        let generation = previewLoadGeneration
+        guard let fileID, let file = previewFiles.first(where: { $0.id == fileID }) else {
+            previewSegments = []
+            isLoadingPreview = false
+            return
+        }
+        let url = file.url
+        isLoadingPreview = true
+        previewSegments = []
+        Task { [weak self] in
+            let segments = await Self.readSegments(url: url)
+            guard let self, generation == self.previewLoadGeneration else { return }
+            self.previewSegments = segments
+            self.isLoadingPreview = false
+        }
+    }
+
+    /// Runs off the main actor (nonisolated async functions execute on the global
+    /// executor); read failures yield an empty list so the UI shows a hint instead.
+    private nonisolated static func readSegments(url: URL) async -> [TranscriptSegment] {
+        (try? SRTParser.load(at: url)) ?? []
+    }
+
+    private func clearPreviews() {
+        previewLoadGeneration += 1
+        previewFiles = []
+        selectedPreviewFileID = nil
+        previewSegments = []
+        isLoadingPreview = false
+    }
+
+    /// Hands the live section over to the static preview (or to nothing after a
+    /// cancellation); the UI hides the live section once isRunning flips false.
+    private func appendLiveSegment(_ segment: TranscriptSegment) {
+        liveSegments = TranscriptPreview.appendCapped(
+            segment,
+            to: liveSegments,
+            limit: TranscriptPreview.liveSegmentLimit
+        )
+    }
+
+    // MARK: - History
+
+    func revealHistoryEntryInFinder(_ entry: HistoryEntry) {
+        if let firstOutputPath = entry.outputFilePaths.first,
+           FileManager.default.fileExists(atPath: firstOutputPath) {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: firstOutputPath)])
+            return
+        }
+
+        let outputDirectory = URL(fileURLWithPath: entry.outputDirectoryPath)
+        guard FileManager.default.fileExists(atPath: outputDirectory.path) else { return }
+        NSWorkspace.shared.open(outputDirectory)
+    }
+
+    func clearHistory() {
+        historyEntries = []
+        let store = historyStore
+        Task {
+            await Self.eraseHistory(store: store)
+        }
+    }
+
+    private func loadHistoryFromStore() {
+        let store = historyStore
+        Task { [weak self] in
+            let entries = await Self.readHistory(store: store)
+            self?.historyEntries = entries
+        }
+    }
+
+    /// History is best-effort: recording failures are swallowed and the store
+    /// is simply re-read so the published list matches what is on disk.
+    private func recordHistoryEntries(
+        reports: [TranscriptionReport],
+        inputFiles: [URL],
+        outputDirectories: [URL],
+        durationSeconds: Double
+    ) {
+        guard !reports.isEmpty else { return }
+        let entries = TranscriptionHistoryStore.makeEntries(
+            reports: reports,
+            inputFiles: inputFiles,
+            outputDirectories: outputDirectories,
+            durationSeconds: durationSeconds
+        )
+        let store = historyStore
+        Task { [weak self] in
+            let loaded = await Self.writeHistory(store: store, entries: entries)
+            self?.historyEntries = loaded
+        }
+    }
+
+    /// Runs off the main actor (nonisolated async functions execute on the
+    /// global executor), keeping history file I/O out of the UI.
+    private nonisolated static func readHistory(store: TranscriptionHistoryStore) async -> [HistoryEntry] {
+        store.load()
+    }
+
+    private nonisolated static func writeHistory(store: TranscriptionHistoryStore, entries: [HistoryEntry]) async -> [HistoryEntry] {
+        try? store.record(entries)
+        return store.load()
+    }
+
+    private nonisolated static func eraseHistory(store: TranscriptionHistoryStore) async {
+        try? store.clear()
+    }
+
+    /// The single funnel every run path (success/failure/cancel) flows through:
+    /// releases the keep-awake assertion by dropping it and posts the completion
+    /// notification unless the batch was cancelled.
+    private func finishTranscriptionRun(
+        successCount: Int = 0,
+        failureCount: Int = 0,
+        wasCancelled: Bool = false
+    ) async {
+        liveSegments = []
         isRunning = false
+        isCancelling = false
+        transcriptionTask = nil
+        keepAwakeToken = nil
+        await completionNotifier.notifyBatchFinished(
+            successCount: successCount,
+            failureCount: failureCount,
+            wasCancelled: wasCancelled
+        )
     }
 
     private func downloadMissingRuntime(_ missing: Set<RuntimeComponent>) async {
         isDownloadingRuntime = true
+        downloadedBytes = 0
+        downloadTotalBytes = nil
         statusText = L.tr("status.runtime_preparing_download")
         appendLog(L.tr("log.runtime_download_start"))
 
@@ -476,21 +724,32 @@ final class AppModel: ObservableObject {
                         self.statusText = status
                     case .log(let line):
                         self.appendLog(line)
+                    case .progress(let bytesDownloaded, let totalBytes):
+                        self.downloadedBytes = bytesDownloaded
+                        self.downloadTotalBytes = totalBytes
                     }
                 }
             }
+
+            // The installer placed new files on disk; cached resolution
+            // results for unchanged inputs must not shadow them.
+            PathResolver.invalidateCaches()
 
             if let modelPath = result.modelPath {
                 self.modelPath = modelPath
             }
 
             statusText = L.tr("status.runtime_ready")
+        } catch is CancellationError {
+            statusText = L.tr("status.download_cancelled")
+            appendLog(L.tr("log.download_cancelled"))
         } catch {
             appendLog(error.localizedDescription)
             statusText = L.tr("status.runtime_download_failed")
         }
 
         isDownloadingRuntime = false
+        runtimeDownloadTask = nil
     }
 
     private func appendLog(_ line: String) {
@@ -552,6 +811,8 @@ private struct AppConfigurationSnapshot {
     let modelPath: String
     let accelerationMode: AccelerationMode
     let outputFormats: Set<OutputFormat>
+    let sourceLanguage: String
+    let translatesToEnglish: Bool
 }
 
 private enum Keys {
@@ -561,4 +822,6 @@ private enum Keys {
     static let modelPath = "modelPath"
     static let accelerationMode = "accelerationMode"
     static let outputFormats = "outputFormats"
+    static let sourceLanguage = "sourceLanguage"
+    static let translatesToEnglish = "translatesToEnglish"
 }

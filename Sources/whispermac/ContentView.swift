@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var isDropTargeted = false
+    @State private var isClearHistoryConfirmationPresented = false
 
     private let contentMaxWidth: CGFloat = 1080
     private let fieldLabelWidth: CGFloat = 108
@@ -14,7 +16,16 @@ struct ContentView: View {
                 outputSection
                 toolSection
                 actionSection
+                if model.isRunning {
+                    liveTranscriptSection
+                }
+                if !model.previewFiles.isEmpty {
+                    previewSection
+                }
                 logSection
+                if !model.historyEntries.isEmpty {
+                    historySection
+                }
             }
             .frame(maxWidth: contentMaxWidth, alignment: .leading)
             .padding(.horizontal, 24)
@@ -24,6 +35,10 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             model.promptToDownloadMissingRuntimeIfNeeded()
+        }
+        .onOpenURL { url in
+            guard url.isFileURL else { return }
+            model.addMediaURLs([url])
         }
         .alert(model.runtimeDownloadPromptTitle, isPresented: $model.isRuntimeDownloadPromptPresented) {
             Button(L.tr("button.download_runtime")) {
@@ -131,6 +146,17 @@ struct ContentView: View {
                 }
             }
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isDropTargeted ? Color.accentColor : .clear, lineWidth: isDropTargeted ? 3 : 0)
+                .padding(2)
+        )
+        .dropDestination(for: URL.self) { urls, _ in
+            model.addMediaURLs(urls)
+            return true
+        } isTargeted: { targeted in
+            isDropTargeted = targeted
+        }
     }
 
     private var outputSection: some View {
@@ -152,17 +178,22 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .padding(.leading, fieldLabelWidth)
 
-                HStack(alignment: .center, spacing: 20) {
+                HStack(alignment: .center, spacing: 14) {
                     Text(L.tr("label.export_formats"))
                         .frame(width: fieldLabelWidth, alignment: .leading)
 
                     Toggle(L.tr("toggle.export_txt"), isOn: outputBinding(for: .txt))
                     Toggle(L.tr("toggle.export_srt"), isOn: outputBinding(for: .srt))
-                    Spacer()
+                    Toggle(L.tr("toggle.export_vtt"), isOn: outputBinding(for: .vtt))
+                    Toggle(L.tr("toggle.export_json"), isOn: outputBinding(for: .json))
+
+                    Spacer(minLength: 8)
+
                     Button(L.tr("button.open_output_directory")) {
                         model.openOutputDirectory()
                     }
                     .disabled(model.inputFiles.isEmpty && model.outputDirectoryPath.isEmpty)
+                    .fixedSize()
                 }
             }
         }
@@ -189,6 +220,33 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                HStack(alignment: .center, spacing: 14) {
+                    Text(L.tr("label.audio_language"))
+                        .frame(width: fieldLabelWidth, alignment: .leading)
+
+                    Picker(L.tr("label.audio_language"), selection: $model.sourceLanguage) {
+                        Text(WhisperLanguage.auto.displayName).tag(WhisperLanguage.autoCode)
+                        ForEach(WhisperLanguage.common) { language in
+                            Text(language.displayName).tag(language.code)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 150, alignment: .leading)
+                    .disabled(model.isBusy)
+
+                    Toggle(L.tr("toggle.translate_to_english"), isOn: $model.translatesToEnglish)
+                        .disabled(model.isBusy)
+
+                    Spacer()
+                }
+
+                Text(L.tr("hint.translate_to_english"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, fieldLabelWidth)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 toolPathRow(title: L.tr("field.whisper_cli"), text: $model.whisperCLIPath) {
                     model.chooseWhisperCLI()
                 }
@@ -209,11 +267,20 @@ struct ContentView: View {
                 if !model.configurationLooksReady || model.isDownloadingRuntime {
                     HStack(spacing: 12) {
                         if model.isDownloadingRuntime {
-                            ProgressView()
-                                .controlSize(.small)
+                            if let progress = model.downloadProgress {
+                                ProgressView(value: progress)
+                                    .progressViewStyle(.linear)
+                                    .frame(maxWidth: 260)
+                            } else {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
                             Text(model.statusText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Button(L.tr("button.cancel_download"), role: .destructive) {
+                                model.cancelRuntimeDownload()
+                            }
                         } else {
                             Button(L.tr("button.download_runtime")) {
                                 model.promptToDownloadMissingRuntime(force: true)
@@ -234,6 +301,13 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canStart)
+
+                if model.isRunning {
+                    Button(L.tr("button.stop"), role: .destructive) {
+                        model.cancelTranscription()
+                    }
+                    .disabled(model.isCancelling)
+                }
 
                 if !model.statusText.isEmpty {
                     Text(model.statusText)
@@ -262,6 +336,104 @@ struct ContentView: View {
         }
     }
 
+    private var liveTranscriptSection: some View {
+        GroupBox(L.tr("section.live_transcript")) {
+            VStack(alignment: .leading, spacing: 10) {
+                if model.liveSegments.isEmpty {
+                    Text(L.tr("live.waiting"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 6) {
+                                ForEach(model.liveSegments) { segment in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Text(segment.displayTimestamp)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 64, alignment: .leading)
+                                        Text(segment.text)
+                                            .font(.callout)
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .id(segment.id)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 260)
+                        .onChange(of: model.liveSegments.last?.id) { _, latestID in
+                            guard let latestID else { return }
+                            proxy.scrollTo(latestID, anchor: .bottom)
+                        }
+                    }
+                }
+
+                Text(L.tr("live.segment_count", model.liveSegments.count))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var previewSection: some View {
+        GroupBox(L.tr("section.preview")) {
+            VStack(alignment: .leading, spacing: 10) {
+                if model.previewFiles.count > 1 {
+                    Picker(L.tr("section.preview"), selection: previewSelection) {
+                        ForEach(model.previewFiles) { file in
+                            Text(file.displayName).tag(Optional(file.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 320, alignment: .leading)
+                }
+
+                if model.isLoadingPreview {
+                    HStack {
+                        ProgressView()
+                            .controlSize(.small)
+                        Spacer()
+                    }
+                } else if model.previewSegments.isEmpty {
+                    Text(L.tr("preview.unavailable"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(model.previewSegments) { segment in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Text(segment.displayTimestamp)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 64, alignment: .leading)
+                                    Text(segment.text)
+                                        .font(.callout)
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 260)
+                }
+            }
+        }
+    }
+
+    private var previewSelection: Binding<URL?> {
+        Binding(
+            get: { model.selectedPreviewFileID },
+            set: { model.selectPreviewFile(id: $0) }
+        )
+    }
+
     private var logSection: some View {
         GroupBox(L.tr("section.logs")) {
             ScrollView {
@@ -272,6 +444,48 @@ struct ContentView: View {
                     .padding(.vertical, 6)
             }
             .frame(minHeight: 160, maxHeight: 220)
+        }
+    }
+
+    private var historySection: some View {
+        GroupBox(L.tr("section.history")) {
+            VStack(alignment: .leading, spacing: 10) {
+                List(model.historyEntries) { entry in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.inputFileName)
+                            Text(entry.completedAt.formatted(.dateTime.month().day().hour().minute()))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L.tr("button.reveal_in_finder")) {
+                            model.revealHistoryEntryInFinder(entry)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .listStyle(.plain)
+                .frame(minHeight: 80, maxHeight: 200)
+
+                HStack {
+                    Spacer()
+                    Button(L.tr("button.clear_history"), role: .destructive) {
+                        isClearHistoryConfirmationPresented = true
+                    }
+                }
+            }
+            .confirmationDialog(
+                L.tr("alert.clear_history_title"),
+                isPresented: $isClearHistoryConfirmationPresented,
+                titleVisibility: .visible
+            ) {
+                Button(L.tr("button.clear_history_confirm"), role: .destructive) {
+                    model.clearHistory()
+                }
+                Button(L.tr("button.not_now"), role: .cancel) {}
+            }
         }
     }
 

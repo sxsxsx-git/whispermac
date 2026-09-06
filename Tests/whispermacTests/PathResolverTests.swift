@@ -72,7 +72,11 @@ func resolveModelPathSearchesInsideProvidedDirectory() throws {
     let nestedDirectory = root.appending(path: "Downloads/whisper-models", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
 
-    let modelURL = nestedDirectory.appending(path: "ggml-base.en.bin")
+    // Updated alongside the resolution-convergence change: the model file is
+    // now the preferred name (previously ggml-base.en.bin, which was only
+    // discoverable via the removed any-ggml-*.bin fallback guessing). The
+    // nested-discovery semantics under a user-provided directory are unchanged.
+    let modelURL = nestedDirectory.appending(path: "ggml-large-v3-turbo.bin")
     FileManager.default.createFile(atPath: modelURL.path, contents: Data())
 
     let resolved = PathResolver.resolveModelPath(root.appending(path: "Downloads").path)
