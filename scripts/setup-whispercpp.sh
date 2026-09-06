@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WHISPER_DIR="$ROOT/.build-tools/whisper.cpp"
 
+# Pin whisper.cpp to a fixed upstream tag so releases stay reproducible.
+# Override with WHISPERCPP_VERSION=<tag> to build a different version.
+WHISPERCPP_VERSION="${WHISPERCPP_VERSION:-v1.9.3}"
+
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required"
   exit 1
@@ -15,9 +19,13 @@ if ! command -v cmake >/dev/null 2>&1; then
 fi
 
 if [ ! -d "$WHISPER_DIR/.git" ]; then
-  git clone https://github.com/ggml-org/whisper.cpp.git "$WHISPER_DIR"
+  git clone --depth 1 --branch "$WHISPERCPP_VERSION" \
+    https://github.com/ggml-org/whisper.cpp.git "$WHISPER_DIR"
 else
-  git -C "$WHISPER_DIR" pull --ff-only
+  # Fetch the pinned tag and force-checkout so switching versions is
+  # deterministic (a plain pull would follow the upstream default branch).
+  git -C "$WHISPER_DIR" fetch --depth 1 origin "$WHISPERCPP_VERSION"
+  git -C "$WHISPER_DIR" checkout --force FETCH_HEAD
 fi
 
 cmake -S "$WHISPER_DIR" \
@@ -30,5 +38,5 @@ cmake -S "$WHISPER_DIR" \
 cmake --build "$WHISPER_DIR/build" --config Release -j
 
 echo
-echo "whisper.cpp is ready:"
+echo "whisper.cpp is ready (pinned at $WHISPERCPP_VERSION):"
 echo "  $WHISPER_DIR/build/bin/whisper-cli"

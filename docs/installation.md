@@ -12,7 +12,8 @@ without guessing which pieces are bundled and which are not.
   `ggml-large-v3-turbo-encoder.mlmodelc`
 - Current release packaging is `app-only`: the archive keeps the app and
   bundled `whisper-cli`, but does not include model files
-- Current releases are not signed or notarized yet
+- Current releases are ad-hoc signed but not Developer-ID-signed or
+  notarized
 
 ## Option 1: Use a Published Release
 
@@ -21,8 +22,12 @@ Use this path if the repository owner has published a GitHub Release.
 1. Download the latest `WhisperMac-<tag>-app-only-macos-arm64.zip` from the
    [Releases page](https://github.com/sxsxsx-git/whispermac/releases).
 2. Unzip it and move `WhisperMac.app` wherever you want to keep it.
-3. If macOS warns that the app is from an unidentified developer, use Finder's
-   `Open` action the first time.
+3. If macOS says the app is damaged or from an unidentified developer,
+   either right-click the app and choose `Open`, or run:
+
+```bash
+xattr -cr /path/to/WhisperMac.app
+```
 4. Prepare or obtain `ggml-large-v3-turbo.bin`.
 5. If you want `GPU + ANE`, also prepare
    `ggml-large-v3-turbo-encoder.mlmodelc` next to that model file.

@@ -33,8 +33,21 @@ mkdir -p "$ASSET_DIR"
 cp -R "$APP_SRC" "$APP_STAGE"
 rm -rf "$APP_STAGE/Contents/Resources/runtime/Models"
 
+# Stripping Resources/runtime/Models invalidates the resource seal of any
+# signature applied earlier, so re-sign the staged app ad-hoc. The zip
+# below then ships with a valid signature.
+codesign --force --deep -s - "$APP_STAGE"
+codesign --verify --deep --strict "$APP_STAGE"
+
 ditto -c -k --sequesterRsrc --keepParent "$APP_STAGE" "$ZIP_PATH"
 shasum -a 256 "$ZIP_PATH" > "$SHA_PATH"
+
+# Prove the shipped artifact is signed: unzip and verify the extracted app.
+ZIP_CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/whispermac-zip-check.XXXXXX")"
+unzip -q "$ZIP_PATH" -d "$ZIP_CHECK_DIR"
+codesign --verify --deep --strict "$ZIP_CHECK_DIR/WhisperMac.app"
+rm -rf "$ZIP_CHECK_DIR"
+echo "Extracted app from zip passed codesign verification."
 
 echo "Release assets created:"
 echo "  $ZIP_PATH"

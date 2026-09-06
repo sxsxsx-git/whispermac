@@ -10,6 +10,17 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 RUNTIME_DIR="$RESOURCES_DIR/runtime"
 ICON_ICNS="$ROOT/Sources/whispermac/Resources/AppIcon.icns"
 
+# App version: WHISPERMAC_VERSION env wins, else the latest git tag
+# (leading "v" stripped), else a fallback for tarball builds without git.
+VERSION="${WHISPERMAC_VERSION:-$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}"
+VERSION="${VERSION:-0.1.1}"
+
+# Build number: commit count, with a fallback for tarball builds.
+BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || true)"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
+
+echo "Building WhisperMac.app version $VERSION (build $BUILD_NUMBER)"
+
 mkdir -p "$DIST_DIR"
 
 swift build -c release
@@ -93,10 +104,41 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>APPL</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Movie</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.movie</string>
+        <string>public.mpeg-4</string>
+        <string>com.apple.quicktime-movie</string>
+        <string>com.apple.m4v-video</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Audio</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.audio</string>
+        <string>public.mpeg-4-audio</string>
+        <string>com.apple.m4a-audio</string>
+        <string>public.mp3</string>
+        <string>com.microsoft.waveform-audio</string>
+        <string>org.xiph.flac</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.1</string>
+  <string>0.0.0</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>0</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
@@ -105,6 +147,19 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# The heredoc above stays static; real values are injected here.
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS_DIR/Info.plist"
+
+# Ad-hoc signing: no certificate needed, but gives the bundle a real code
+# signature (including nested binaries) so Gatekeeper treats it as a
+# proper app instead of unsigned garbage.
+codesign --force --deep -s - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
+echo "Ad-hoc code signature applied and verified: $APP_DIR"
+
 echo
 echo "App bundle created:"
 echo "  $APP_DIR"
+echo "  version: $VERSION"
+echo "  build:   $BUILD_NUMBER"
