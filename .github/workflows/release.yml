@@ -45,6 +45,19 @@ jobs:
       - name: Build app bundle
         run: WHISPERMAC_VERSION="${RELEASE_TAG#v}" ./scripts/build-app-bundle.sh
 
+      - name: Smoke test app bundle
+        run: |
+          BINARY="./dist/WhisperMac.app/Contents/MacOS/WhisperMac"
+          timeout 5 "$BINARY" 2>&1 || CODE=$?
+          # 137 (SIGKILL from timeout) = still running = OK
+          # 0 or 1 = exited normally = OK
+          # > 128 and != 137 = signal crash = FAIL
+          if [ "${CODE:-0}" -gt 128 ] && [ "${CODE:-0}" -ne 137 ]; then
+            echo "App crashed with exit code $CODE"
+            exit 1
+          fi
+          echo "Smoke test passed"
+
       - name: Create release assets
         run: ./scripts/create-release-assets.sh "$RELEASE_TAG"
 

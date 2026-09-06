@@ -23,6 +23,7 @@
 "section.runtime" = "运行环境";
 "label.acceleration_mode" = "加速模式";
 "hint.audio_preprocessor" = "音频预处理使用 macOS 自带的 afconvert，不需要额外安装 FFmpeg。";
+"hint.whisper_cli_manual" = "whisper-cli 无法自动下载，请使用上方的「选择…」按钮手动指定路径。";
 "button.start_transcription" = "开始转写";
 "button.transcribing" = "转写中…";
 "button.stop" = "停止";
