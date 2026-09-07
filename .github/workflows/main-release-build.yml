@@ -1,26 +1,26 @@
-name: Main release build
+name: Release build
 
-# Every push to main builds the app bundle (pinned whisper.cpp runtime,
-# ad-hoc signed) and publishes it two ways:
-#   1. a workflow artifact per run (kept 90 days, per-commit history)
-#   2. a rolling prerelease tagged `main-build`, replaced on each push and
-#      marked prerelease so it never shadows the latest stable release
-# Versioned stable releases stay manual: push a `v*` tag and publish by hand.
+# One pipeline, two release paths:
+# - push to main    -> rolling prerelease tagged `main-build`, replaced on
+#                      every push and never shadowing the stable Latest
+# - push of a v* tag -> stable release for that tag (the versioned path)
+# Manual dispatch builds main the same way as a main push.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: main-release-build
+  group: release-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build app and publish rolling prerelease
+    name: Build app and publish release
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -36,20 +36,28 @@ jobs:
           cmake --version | head -1
           swift --version 2>&1 | head -1
 
-      - name: Build pinned whisper.cpp runtime
-        run: ./scripts/setup-whispercpp.sh
-
-      - name: Compute version
+      - name: Detect release mode and version
         id: ver
         run: |
-          # Only real v* tags seed the version; the rolling `main-build`
-          # release tag must never be picked up as the base.
-          BASE="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)"
-          BASE="${BASE:-0.1.1}"
-          SHA="$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
-          VERSION="${BASE}-main.${SHA}"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            # Stable release: the tag itself carries the version.
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "kind=stable" >> "$GITHUB_OUTPUT"
+          else
+            # Rolling main build: newest v* tag plus short commit hash. Only
+            # real v* tags seed the version; the rolling `main-build` release
+            # tag must never be picked up as the base.
+            BASE="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)"
+            BASE="${BASE:-0.1.1}"
+            SHA="$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+            VERSION="${BASE}-main.${SHA}"
+            echo "kind=rolling" >> "$GITHUB_OUTPUT"
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "version: ${VERSION}"
+          echo "kind/version resolved: ${VERSION}"
+
+      - name: Build pinned whisper.cpp runtime
+        run: ./scripts/setup-whispercpp.sh
 
       - name: Build WhisperMac.app
         env:
@@ -67,6 +75,7 @@ jobs:
           if-no-files-found: error
 
       - name: "Publish rolling prerelease (tag: main-build)"
+        if: steps.ver.outputs.kind == 'rolling'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.ver.outputs.version }}
@@ -80,3 +89,18 @@ jobs:
             --prerelease \
             --title "Main branch build (${VERSION})" \
             --notes "$NOTES"
+
+      - name: Publish stable release for the tag
+        if: steps.ver.outputs.kind == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; uploading assets only." >&2
+            gh release upload "$GITHUB_REF_NAME" dist/release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/release-assets/* \
+              --title "WhisperMac v${VERSION}" \
+              --generate-notes
+          fi
