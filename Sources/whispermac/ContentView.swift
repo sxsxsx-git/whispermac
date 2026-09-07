@@ -6,6 +6,35 @@ import SwiftUI
 /// outputs open as sheets on demand.
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    /// nil until the first valid workspace measurement; the UI renders
+    /// regular until then. Only a changed class writes state.
+    @State private var windowSizeMode: WindowSizeMode?
+
+    var body: some View {
+        MainWindowContent(
+            model: model,
+            mode: windowSizeMode ?? .regular,
+            onWorkspaceSizeChange: { size in
+                let next = WindowSizeMode.next(current: windowSizeMode, workspaceWidth: size.width)
+                if next != windowSizeMode {
+                    windowSizeMode = next
+                }
+            }
+        )
+        .environment(\.windowSizeMode, windowSizeMode ?? .regular)
+    }
+}
+
+/// The window skeleton (queue / workspace / bottom bar / toolbar / sheets),
+/// split out of `ContentView` so the width class is derived from the
+/// workspace container's actual geometry — never the window width minus a
+/// hardcoded queue — while the rest of the UI reads the resolved class from
+/// the environment. `onWorkspaceSizeChange` reports that container's size.
+struct MainWindowContent: View {
+    @ObservedObject var model: AppModel
+    let mode: WindowSizeMode
+    let onWorkspaceSizeChange: (CGSize) -> Void
+
     @State private var isDropTargeted = false
     @State private var presentedSheet: PresentedSheet?
     @State private var isClearHistoryConfirmationPresented = false
@@ -26,6 +55,9 @@ struct ContentView: View {
                 Divider()
                 mainWorkspace
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onGeometryChange(for: CGSize.self, of: { $0.size }) {
+                        onWorkspaceSizeChange($0)
+                    }
                     .overlay {
                         if isDropTargeted {
                             RoundedRectangle(cornerRadius: 0)
@@ -43,6 +75,7 @@ struct ContentView: View {
         .id(model.appLanguage)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar { toolbarContent }
+        .environment(\.windowSizeMode, mode)
         .sheet(item: $presentedSheet) { sheet in
             presentedSheetView(sheet)
         }
@@ -148,7 +181,7 @@ struct TaskQueueView: View {
         VStack(spacing: 0) {
             HStack {
                 Text(L.tr("queue.title"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: UITypographyScale.scaled(13), weight: .semibold))
                 Spacer()
                 Text(L.tr("label.file_count", model.inputFiles.count))
                     .font(.caption)
@@ -161,7 +194,7 @@ struct TaskQueueView: View {
             if model.inputFiles.isEmpty {
                 VStack(spacing: 6) {
                     Text(L.tr("queue.empty.title"))
-                        .font(.system(size: 13))
+                        .font(.system(size: UITypographyScale.scaled(13)))
                     Text(L.tr("queue.empty.detail"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -189,13 +222,13 @@ struct TaskQueueView: View {
     private func queueRow(_ url: URL) -> some View {
         HStack(spacing: 10) {
             Image(systemName: iconForExtension(url.pathExtension))
-                .font(.system(size: 14))
+                .font(.system(size: UITypographyScale.scaled(14)))
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(url.lastPathComponent)
-                    .font(.system(size: 13))
+                    .font(.system(size: UITypographyScale.scaled(13)))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(url.deletingLastPathComponent().path)
@@ -272,13 +305,26 @@ struct PersistentActionBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 16) {
-            leading
-            Spacer()
-            trailing
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                leading
+                Spacer()
+                trailing
+            }
+            // Stacked fallback for narrow windows or large text: status on
+            // top, actions below, so the primary action is never clipped.
+            VStack(alignment: .leading, spacing: 12) {
+                leading
+                HStack(spacing: 16) {
+                    Spacer()
+                    trailing
+                }
+            }
         }
         .padding(.horizontal, 20)
-        .frame(maxWidth: .infinity, minHeight: barHeight, maxHeight: barHeight, alignment: .center)
+        .padding(.vertical, 12)
+        // 80/96 is a floor: the bar grows when the stacked candidate wins.
+        .frame(maxWidth: .infinity, minHeight: barHeight, alignment: .center)
         .background {
             VStack(spacing: 0) {
                 Rectangle()
@@ -304,7 +350,7 @@ struct PersistentActionBar: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color(nsColor: .systemGreen))
                     Text(L.tr("bar.done_files", inputFileCount))
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: UITypographyScale.scaled(13), weight: .medium))
                 }
             case let .failed(summary):
                 HStack(spacing: 8) {
@@ -312,13 +358,14 @@ struct PersistentActionBar: View {
                         .foregroundStyle(Color(nsColor: .systemRed))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L.tr("bar.failure"))
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: UITypographyScale.scaled(13), weight: .medium))
                         Text(summary)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .help(summary)
+                            .frame(maxWidth: 380, alignment: .leading)
                     }
                 }
             case .cancelled:
@@ -326,7 +373,7 @@ struct PersistentActionBar: View {
                     Image(systemName: "minus.circle")
                         .foregroundStyle(.secondary)
                     Text(L.tr("bar.cancelled"))
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: UITypographyScale.scaled(13), weight: .medium))
                 }
             }
         case let .setup(readiness):
@@ -337,17 +384,23 @@ struct PersistentActionBar: View {
     private func runningLeading(_ phase: ActiveRunPhase) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(stageTitle(phase))
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: UITypographyScale.scaled(13), weight: .medium))
+                .lineLimit(1...2)
+                .truncationMode(.middle)
+                // Bounds the ideal width so the bar's ViewThatFits only stacks
+                // when the row genuinely cannot fit, not on long file names.
+                .frame(maxWidth: 360, alignment: .leading)
             HStack(spacing: 10) {
                 if phase == .stopping {
                     ProgressView()
                         .controlSize(.small)
                 } else {
                     ProgressView(value: model.overallProgress)
-                        .frame(width: 220)
+                        .frame(minWidth: 140, idealWidth: 220, maxWidth: 320)
                     Text(progressCaption(phase))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
@@ -388,21 +441,25 @@ struct PersistentActionBar: View {
         HStack(spacing: 10) {
             if let progress = model.downloadProgress {
                 ProgressView(value: progress)
-                    .frame(width: 220)
+                    .frame(minWidth: 140, idealWidth: 220, maxWidth: 320)
             } else {
                 ProgressView()
                     .controlSize(.small)
             }
             Text(model.statusText)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: UITypographyScale.scaled(13), weight: .medium))
                 .lineLimit(2)
+                .frame(maxWidth: 420, alignment: .leading)
         }
     }
 
     private func setupLeading(_ readiness: SetupReadiness) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(setupStatusLine(readiness))
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: UITypographyScale.scaled(13), weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 420, alignment: .leading)
             Text(L.tr("privacy.local"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -542,12 +599,10 @@ struct SettingsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(L.tr("button.settings"))
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
 
             GroupBox(L.tr("settings.section.general")) {
-                HStack {
-                    Text(L.tr("label.interface_language"))
-                        .frame(width: 104, alignment: .leading)
+                LabeledRow(title: L.tr("label.interface_language")) {
                     Picker(L.tr("label.interface_language"), selection: $model.appLanguage) {
                         ForEach(AppLanguage.allCases) { language in
                             Text(language.displayName).tag(language)
@@ -556,7 +611,6 @@ struct SettingsSheet: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .frame(width: 200, alignment: .leading)
-                    Spacer()
                 }
                 .padding(.vertical, 4)
             }
@@ -582,7 +636,7 @@ struct SettingsSheet: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 280, alignment: .leading)
+                    .frame(maxWidth: 320, alignment: .leading)
                     .disabled(model.isBusy)
 
                     Text(model.accelerationDetail)
@@ -657,13 +711,13 @@ struct SettingsSheet: View {
     }
 
     private func pathRow(title: String, text: Binding<String>, choose: @escaping () -> Void) -> some View {
-        HStack {
-            Text(title)
-                .frame(width: 104, alignment: .leading)
-            TextField("", text: text)
-                .textFieldStyle(.roundedBorder)
-            Button(L.tr("button.choose"), action: choose)
-                .disabled(model.isBusy)
+        LabeledRow(title: title) {
+            HStack(spacing: 8) {
+                TextField("", text: text)
+                    .textFieldStyle(.roundedBorder)
+                Button(L.tr("button.choose"), action: choose)
+                    .disabled(model.isBusy)
+            }
         }
     }
 }
@@ -678,7 +732,7 @@ struct HistorySheet: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(L.tr("section.history"))
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
@@ -722,7 +776,7 @@ struct HistorySheet: View {
             }
             .padding(20)
         }
-        .frame(width: 560, height: 440)
+        .frame(minWidth: 560, minHeight: 440)
         .confirmationDialog(
             L.tr("alert.clear_history_title"),
             isPresented: $isClearConfirmationPresented,
@@ -745,7 +799,7 @@ struct LogsSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(L.tr("section.logs"))
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
@@ -771,7 +825,7 @@ struct LogsSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 680, height: 500)
+        .frame(minWidth: 680, minHeight: 500)
     }
 }
 
@@ -784,7 +838,7 @@ struct AllOutputsSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(L.tr("sheet.all_outputs.title"))
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
@@ -834,7 +888,7 @@ struct AllOutputsSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 620, height: 440)
+        .frame(minWidth: 620, minHeight: 440)
     }
 }
 

@@ -8,11 +8,50 @@ import SwiftUI
 
 enum TaskWorkspaceMetrics {
     static let queueWidth: CGFloat = 236
+    static let workspaceDividerWidth: CGFloat = 1
+    // Width-class thresholds measured on the workspace (window content width
+    // minus queue and divider). The 40 pt gap between them is hysteresis:
+    // `expanded` is entered at 1100 and only left below 1060, so a live
+    // resize cannot oscillate the layout around a single value.
+    static let expandWorkspaceThreshold: CGFloat = 1100
+    static let collapseWorkspaceThreshold: CGFloat = 1060
     static let contentTopPadding: CGFloat = 28
     static let contentHorizontalPadding: CGFloat = 32
     static let sectionSpacing: CGFloat = 24
     static let readingColumnMaxWidth: CGFloat = 760
+    static let readingColumnMaxWidthExpanded: CGFloat = 820
     static let labelColumnWidth: CGFloat = 104
+}
+
+/// Caps workspace content to a single reading column: 760 pt left-aligned in
+/// the regular width class; 820 pt centered once the workspace is expanded,
+/// so large windows and full screen keep symmetric breathing room instead of
+/// one-sided blank space. Column content stays leading-aligned in both.
+extension View {
+    func readingColumn(_ mode: WindowSizeMode) -> some View {
+        frame(maxWidth: mode == .expanded
+            ? TaskWorkspaceMetrics.readingColumnMaxWidthExpanded
+            : TaskWorkspaceMetrics.readingColumnMaxWidth,
+            alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: mode == .expanded ? .center : .leading)
+    }
+}
+
+/// DEBUG-only typography scale for layout verification (plan §6.1): launch
+/// with `WHISPERMAC_UI_FONT_SCALE=1.2` to multiply every explicit point size
+/// below. In release builds the value is always 1 and there is no entry point.
+enum UITypographyScale {
+    static let value: CGFloat = {
+        #if DEBUG
+        guard let raw = ProcessInfo.processInfo.environment["WHISPERMAC_UI_FONT_SCALE"],
+              let parsed = Double(raw), parsed > 0 else { return 1 }
+        return CGFloat(parsed)
+        #else
+        return 1
+        #endif
+    }()
+
+    static func scaled(_ size: CGFloat) -> CGFloat { size * value }
 }
 
 // MARK: - Shared pieces
@@ -22,7 +61,7 @@ struct SectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: UITypographyScale.scaled(15), weight: .semibold))
     }
 }
 
@@ -36,23 +75,34 @@ struct StatusDot: View {
     }
 }
 
-/// Fixed-width label row that collapses to a vertical layout when the
-/// horizontal form no longer fits (large text, CJK, narrow window).
+/// Label row that collapses to a vertical layout when the horizontal form no
+/// longer fits (large text, CJK, narrow window). The horizontal candidate's
+/// label keeps its natural width above the 104 pt baseline so an overlong
+/// label is measured truthfully and the candidate is rejected, never masked.
 struct LabeledRow<Content: View>: View {
     let title: String
+    var secondaryTitle: Bool = false
     @ViewBuilder let content: Content
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .center, spacing: 16) {
-                Text(title)
-                    .frame(width: TaskWorkspaceMetrics.labelColumnWidth, alignment: .leading)
+                titleText
+                    .frame(minWidth: TaskWorkspaceMetrics.labelColumnWidth, alignment: .leading)
                 content
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text(title)
+                titleText
                 content
             }
+        }
+    }
+
+    @ViewBuilder private var titleText: some View {
+        if secondaryTitle {
+            Text(title).foregroundStyle(.secondary)
+        } else {
+            Text(title)
         }
     }
 }
@@ -63,11 +113,11 @@ struct TranscriptRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(segment.displayTimestamp)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(size: UITypographyScale.scaled(12), design: .monospaced))
                 .foregroundStyle(.secondary)
                 .frame(width: 64, alignment: .leading)
             Text(segment.text)
-                .font(.system(size: 14))
+                .font(.system(size: UITypographyScale.scaled(14)))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -122,6 +172,7 @@ private extension View {
 
 struct SetupWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.windowSizeMode) private var windowSizeMode
     let readiness: SetupReadiness
     let openSettings: () -> Void
     @State private var showsFullOptions = false
@@ -169,15 +220,14 @@ struct SetupWorkspaceView: View {
             .padding(.top, TaskWorkspaceMetrics.contentTopPadding)
             .padding(.horizontal, TaskWorkspaceMetrics.contentHorizontalPadding)
             .padding(.bottom, 24)
-            .frame(maxWidth: TaskWorkspaceMetrics.readingColumnMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .readingColumn(windowSizeMode)
         }
     }
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(L.tr("empty.title"))
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
             Text(L.tr("empty.subtitle"))
                 .foregroundStyle(.secondary)
         }
@@ -186,10 +236,10 @@ struct SetupWorkspaceView: View {
     private var dropInvite: some View {
         VStack(spacing: 8) {
             Image(systemName: "arrow.up.doc")
-                .font(.system(size: 40))
+                .font(.system(size: UITypographyScale.scaled(40)))
                 .foregroundStyle(.secondary)
             Text(L.tr("empty.drop.title"))
-                .font(.system(size: 20, weight: .medium))
+                .font(.system(size: UITypographyScale.scaled(20), weight: .medium))
             Text(L.tr("empty.drop.detail"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -235,16 +285,13 @@ struct SetupWorkspaceView: View {
     }
 
     private func defaultsRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .frame(width: 120, alignment: .leading)
+        LabeledRow(title: label, secondaryTitle: true) {
             Text(value)
                 .fontWeight(.medium)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .font(.system(size: 13))
+        .font(.system(size: UITypographyScale.scaled(13)))
     }
 
     private var optionsForm: some View {
@@ -302,7 +349,7 @@ struct SetupWorkspaceView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .frame(width: 380)
+            .frame(minWidth: 320, idealWidth: 380, maxWidth: 560, alignment: .leading)
             .disabled(model.isBusy)
         }
     }
@@ -352,7 +399,7 @@ struct SetupWorkspaceView: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
-            .frame(width: 240, alignment: .leading)
+            .frame(minWidth: 200, idealWidth: 240, maxWidth: 360, alignment: .leading)
             .disabled(model.isBusy)
         }
     }
@@ -460,10 +507,10 @@ struct MissingModelPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Image(systemName: "square.stack.3d.down.right")
-                .font(.system(size: 36))
+                .font(.system(size: UITypographyScale.scaled(36)))
                 .foregroundStyle(.secondary)
             Text(L.tr("missing.model.title"))
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(20), weight: .semibold))
             Text(L.tr("missing.model.detail"))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -501,10 +548,10 @@ struct MissingCLIPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Image(systemName: "terminal")
-                .font(.system(size: 36))
+                .font(.system(size: UITypographyScale.scaled(36)))
                 .foregroundStyle(.secondary)
             Text(L.tr("missing.cli.title"))
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(20), weight: .semibold))
             Text(L.tr("hint.whisper_cli_manual"))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -530,13 +577,14 @@ struct MissingCLIPanel: View {
 
 struct DownloadWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.windowSizeMode) private var windowSizeMode
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: TaskWorkspaceMetrics.sectionSpacing) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(model.statusText.isEmpty ? L.tr("status.runtime_preparing_download") : model.statusText)
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
                     Text(L.tr("privacy.download"))
                         .foregroundStyle(.secondary)
                 }
@@ -544,7 +592,7 @@ struct DownloadWorkspaceView: View {
                 HStack(spacing: 12) {
                     if let progress = model.downloadProgress {
                         ProgressView(value: progress)
-                            .frame(width: 280)
+                            .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
                         Text("\(Int(progress * 100))%")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -564,8 +612,7 @@ struct DownloadWorkspaceView: View {
             .padding(.top, TaskWorkspaceMetrics.contentTopPadding)
             .padding(.horizontal, TaskWorkspaceMetrics.contentHorizontalPadding)
             .padding(.bottom, 24)
-            .frame(maxWidth: TaskWorkspaceMetrics.readingColumnMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .readingColumn(windowSizeMode)
         }
     }
 }
@@ -574,39 +621,76 @@ struct DownloadWorkspaceView: View {
 
 struct RunWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.windowSizeMode) private var windowSizeMode
     let phase: ActiveRunPhase
 
     @State private var showsSnapshotDetail = false
     @State private var followsLatest = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Fixed viewport for the live transcript so streaming segments scroll
-    /// inside it instead of stretching the workspace page.
-    private let liveTranscriptHeight: CGFloat = 260
+    /// Transcript viewport floor: `max(240, H − F)` per plan R4. `H` is this
+    /// view's measured height; `F` is the measured height of everything that
+    /// is not the viewport (title/detail block, section header, follow row,
+    /// divider, paddings, spacings). Below the floor the retained page-level
+    /// ScrollView absorbs the overflow instead of crushing the viewport.
+    private let liveTranscriptMinHeight: CGFloat = 240
+    private let liveSectionSpacing: CGFloat = 12
+
+    @State private var workspaceHeight: CGFloat = 0
+    @State private var headerBlockHeight: CGFloat = 0
+    @State private var sectionHeaderHeight: CGFloat = 0
+    @State private var followRowHeight: CGFloat = 0
+
+    /// Everything around the viewport: page paddings, the page-level gap, the
+    /// three live-section gaps and the divider. Each counted exactly once.
+    private var viewportChromeHeight: CGFloat {
+        TaskWorkspaceMetrics.contentTopPadding
+            + TaskWorkspaceMetrics.sectionSpacing      // header block ↔ live section
+            + 3 * liveSectionSpacing
+            + 1                                        // divider
+            + 24                                       // page bottom padding
+    }
+
+    private var viewportHeight: CGFloat {
+        guard workspaceHeight > 0, headerBlockHeight > 0,
+              sectionHeaderHeight > 0, followRowHeight > 0 else {
+            return liveTranscriptMinHeight
+        }
+        let surrounding = viewportChromeHeight + headerBlockHeight + sectionHeaderHeight + followRowHeight
+        return max(liveTranscriptMinHeight, workspaceHeight - surrounding)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: TaskWorkspaceMetrics.sectionSpacing) {
-                titleBlock
-
-                if let snapshot = model.activeSnapshot {
-                    snapshotDisclosure(snapshot)
-                }
-
+                headerBlock
                 liveTranscriptSection
             }
             .padding(.top, TaskWorkspaceMetrics.contentTopPadding)
             .padding(.horizontal, TaskWorkspaceMetrics.contentHorizontalPadding)
             .padding(.bottom, 24)
-            .frame(maxWidth: TaskWorkspaceMetrics.readingColumnMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .readingColumn(windowSizeMode)
         }
+        .onGeometryChange(for: CGSize.self, of: { $0.size }) { workspaceHeight = $0.height }
+    }
+
+    /// Title + frozen task details, measured together as the non-viewport
+    /// header content; re-measures itself when the disclosure expands.
+    private var headerBlock: some View {
+        VStack(alignment: .leading, spacing: TaskWorkspaceMetrics.sectionSpacing) {
+            titleBlock
+
+            if let snapshot = model.activeSnapshot {
+                snapshotDisclosure(snapshot)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerBlockHeight = $0 }
     }
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(phaseTitle)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
             if !phaseSubtitle.isEmpty {
                 Text(phaseSubtitle)
                     .foregroundStyle(.secondary)
@@ -659,7 +743,7 @@ struct RunWorkspaceView: View {
         } label: {
             HStack {
                 Text(summaryLine(snapshot))
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: UITypographyScale.scaled(13), weight: .medium))
                 Spacer()
                 Text(L.tr("run.summary.toggle"))
                     .font(.caption)
@@ -684,20 +768,17 @@ struct RunWorkspaceView: View {
     }
 
     private func snapshotRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .frame(width: 120, alignment: .leading)
+        LabeledRow(title: label, secondaryTitle: true) {
             Text(value)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
         }
-        .font(.system(size: 13))
+        .font(.system(size: UITypographyScale.scaled(13)))
     }
 
     private var liveTranscriptSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: liveSectionSpacing) {
             HStack {
                 SectionHeader(title: L.tr("section.live_transcript"))
                 Spacer()
@@ -705,13 +786,15 @@ struct RunWorkspaceView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { sectionHeaderHeight = $0 }
 
             Divider()
 
             if model.liveSegments.isEmpty {
                 Text(L.tr("live.waiting"))
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: liveTranscriptHeight, maxHeight: liveTranscriptHeight, alignment: .center)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: viewportHeight, alignment: .center)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -724,7 +807,7 @@ struct RunWorkspaceView: View {
                         .padding(.vertical, 4)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(height: liveTranscriptHeight)
+                    .frame(height: viewportHeight)
                     .onChange(of: model.liveSegments.last?.id) { _, latestID in
                         guard followsLatest, let latestID else { return }
                         if reduceMotion {
@@ -747,6 +830,7 @@ struct RunWorkspaceView: View {
                     .toggleStyle(.checkbox)
                     .font(.caption)
             }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { followRowHeight = $0 }
         }
     }
 }
@@ -755,6 +839,7 @@ struct RunWorkspaceView: View {
 
 struct RunResultView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.windowSizeMode) private var windowSizeMode
     let outcome: TaskOutcome
     let openLogs: () -> Void
     let openAllOutputs: () -> Void
@@ -776,8 +861,7 @@ struct RunResultView: View {
             .padding(.top, TaskWorkspaceMetrics.contentTopPadding)
             .padding(.horizontal, TaskWorkspaceMetrics.contentHorizontalPadding)
             .padding(.bottom, 24)
-            .frame(maxWidth: TaskWorkspaceMetrics.readingColumnMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .readingColumn(windowSizeMode)
         }
     }
 
@@ -795,7 +879,7 @@ struct RunResultView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(L.tr("result.success.title"))
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
                 Text(L.tr("result.success.detail", inputFileCount, outputFiles.count))
                     .foregroundStyle(.secondary)
             }
@@ -924,7 +1008,7 @@ struct RunResultView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(L.tr("result.failure.title"))
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
                 Text(summary)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -959,7 +1043,7 @@ struct RunResultView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(L.tr("result.cancelled.title"))
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: UITypographyScale.scaled(22), weight: .semibold))
                 Text(L.tr("result.cancelled.detail"))
                     .foregroundStyle(.secondary)
             }
