@@ -54,6 +54,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveSegments: [TranscriptSegment] = []
     @Published private(set) var historyEntries: [HistoryEntry] = []
 
+    // P0.1 presentation state: terminal outcome and in-flight stage of the
+    // batch, so results survive `isRunning` ending and the UI never has to
+    // parse localized status text to learn where the run stands.
+    @Published private(set) var activePhase: ActiveRunPhase?
+    @Published private(set) var activeSnapshot: AppConfigurationSnapshot?
+    @Published private(set) var runEffectiveMode: AccelerationMode?
+    @Published private(set) var lastOutcome: TaskOutcome?
+    @Published private(set) var lastRunOutputFiles: [URL] = []
+    @Published var selectedResultFileID: URL?
+
     private let defaults = UserDefaults.standard
     private var hasPresentedInitialRuntimePrompt = false
     private var transcriptionTask: Task<Void, Never>?
@@ -116,15 +126,44 @@ final class AppModel: ObservableObject {
     }
 
     var canStart: Bool {
-        let resolvedWhisperCLIPath = self.resolvedWhisperCLIPath
-        let resolvedModelPath = self.resolvedModelPath
+        startDisabledReason == nil
+    }
 
-        return !isRunning &&
-            !isDownloadingRuntime &&
-            !inputFiles.isEmpty &&
-            !resolvedWhisperCLIPath.isEmpty &&
-            !resolvedModelPath.isEmpty &&
-            !outputFormats.isEmpty
+    /// CLI / model are blockers; a missing Core ML encoder is only an
+    /// optional-capability hint (GPU fallback), never a start blocker.
+    var blockingRuntimeComponents: Set<RuntimeComponent> {
+        missingRuntimeComponents.subtracting([.coreMLEncoder])
+    }
+
+    var hasResolvableWhisperCLI: Bool {
+        !resolvedWhisperCLIPath.isEmpty
+    }
+
+    var hasResolvableModel: Bool {
+        !resolvedModelPath.isEmpty
+    }
+
+    var mainContentState: MainContentState {
+        TaskPresentation.mainContent(
+            isRunning: isRunning,
+            isCancelling: isCancelling,
+            isDownloadingRuntime: isDownloadingRuntime,
+            activePhase: activePhase,
+            lastOutcome: lastOutcome,
+            inputCount: inputFiles.count,
+            blockingRuntimeComponents: blockingRuntimeComponents
+        )
+    }
+
+    var startDisabledReason: StartDisabledReason? {
+        TaskPresentation.startDisabledReason(
+            isRunning: isRunning,
+            isDownloadingRuntime: isDownloadingRuntime,
+            inputCount: inputFiles.count,
+            hasWhisperCLI: hasResolvableWhisperCLI,
+            hasModel: hasResolvableModel,
+            outputFormatCount: outputFormats.count
+        )
     }
 
     var downloadProgress: Double? {
@@ -216,6 +255,10 @@ final class AppModel: ObservableObject {
     }
 
     func addMediaURLs(_ urls: [URL]) {
+        // P0.1: a started batch executes a frozen snapshot; adding files mid-run
+        // would desync the visible queue from that snapshot, so additions are
+        // rejected until the batch ends.
+        guard !isRunning else { return }
         let additions = PanelHelper.mediaFileAdditions(from: urls, existing: inputFiles)
         guard !additions.isEmpty else { return }
 
@@ -227,12 +270,12 @@ final class AppModel: ObservableObject {
     }
 
     func clearInputFiles() {
-        guard !isRunning else { return }
+        guard !isBusy else { return }
         inputFiles.removeAll()
     }
 
     func removeInputFile(_ url: URL) {
-        guard !isRunning else { return }
+        guard !isBusy else { return }
         inputFiles.removeAll { $0 == url }
     }
 
@@ -367,9 +410,45 @@ final class AppModel: ObservableObject {
             translatesToEnglish: translatesToEnglish
         )
 
+        // A new batch starts from a clean terminal slate; the previous run's
+        // outcome must not leak into this one's result view.
+        lastOutcome = nil
+        lastRunOutputFiles = []
+        selectedResultFileID = nil
+        activeSnapshot = snapshot
+
         transcriptionTask = Task {
             await runTranscription(snapshot)
         }
+    }
+
+    /// Leaves the terminal-result view without starting anything (used by
+    /// "New Task" / "Adjust Options"); queue and settings are preserved.
+    func dismissOutcome() {
+        lastOutcome = nil
+    }
+
+    func selectResultFile(id: URL?) {
+        guard let id, lastRunOutputFiles.contains(id) else { return }
+        selectedResultFileID = id
+    }
+
+    /// Reveals the confirmed result file the user is looking at: the selected
+    /// SRT preview when one exists, otherwise the selected output from the
+    /// actual reported files.
+    func revealSelectedResultInFinder() {
+        let candidates: [URL?] = [selectedPreviewFileID, selectedResultFileID, lastRunOutputFiles.first]
+        for candidate in candidates {
+            if let url = candidate, FileManager.default.fileExists(atPath: url.path) {
+                revealOutputFileInFinder(url)
+                return
+            }
+        }
+    }
+
+    func revealOutputFileInFinder(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     func cancelTranscription() {
@@ -393,6 +472,8 @@ final class AppModel: ObservableObject {
         currentFileName = ""
         currentStageDescription = ""
         currentTranscriptionProgress = 0
+        activePhase = .preparingInputs(currentIndex: 0, total: snapshot.inputFiles.count)
+        runEffectiveMode = nil
 
         let service = TranscriptionService()
         let modelPlan: RuntimeModelPlan
@@ -408,9 +489,11 @@ final class AppModel: ObservableObject {
         } catch {
             appendLog(error.localizedDescription)
             statusText = L.tr("status.prepare_failed")
+            lastOutcome = .failed(summary: error.localizedDescription)
             await finishTranscriptionRun(failureCount: snapshot.inputFiles.count)
             return
         }
+        runEffectiveMode = modelPlan.effectiveMode
 
         appendLog(L.tr("log.start_files", snapshot.inputFiles.count))
         appendLog(L.tr("log.requested_mode", snapshot.accelerationMode.title))
@@ -449,6 +532,7 @@ final class AppModel: ObservableObject {
                 onInputStageChange: { [weak self] index, stage in
                     await MainActor.run {
                         guard let self else { return }
+                        self.activePhase = .preparingInputs(currentIndex: index, total: totalFiles)
                         self.statusText = L.tr("status.processing", index + 1, totalFiles)
                         self.currentFileName = snapshot.inputFiles[index].lastPathComponent
                         switch stage {
@@ -470,6 +554,7 @@ final class AppModel: ObservableObject {
                         guard let self else { return }
                         switch stage {
                         case .transcribing:
+                            self.activePhase = .transcribingBatch(totalFiles: totalFiles)
                             self.statusText = L.tr("stage.transcribing_batch", totalFiles)
                             self.currentFileName = ""
                             self.currentStageDescription = stage.description
@@ -521,6 +606,12 @@ final class AppModel: ObservableObject {
                 }
             }
             installPreviewFiles(from: reports, inputs: batchInputs)
+            // Success comes only from the service returning normally; the
+            // output list is exactly what the reports confirmed on disk.
+            let outputFiles = reports.flatMap(\.outputFiles)
+            lastRunOutputFiles = outputFiles
+            selectedResultFileID = outputFiles.first
+            lastOutcome = .succeeded(inputFileCount: totalFiles, outputFiles: outputFiles)
             recordHistoryEntries(
                 reports: reports,
                 inputFiles: snapshot.inputFiles,
@@ -530,12 +621,14 @@ final class AppModel: ObservableObject {
         } catch is CancellationError {
             wasCancelled = true
             appendLog(L.tr("log.cancelled"))
+            lastOutcome = .cancelled
         } catch {
             failureCount = totalFiles
             currentFileProgress = 1
             currentStageDescription = L.tr("stage.failed")
             appendLog(L.tr("log.failed_batch"))
             appendLog(error.localizedDescription)
+            lastOutcome = .failed(summary: error.localizedDescription)
         }
 
         appendLog(String(repeating: "-", count: 72))
@@ -561,9 +654,12 @@ final class AppModel: ObservableObject {
         files.reserveCapacity(reports.count)
         for (index, report) in reports.enumerated() {
             guard index < inputs.count else { continue }
-            let displayName = inputs[index].inputURL.lastPathComponent
             for output in report.outputFiles where output.pathExtension.lowercased() == "srt" {
-                files.append(TranscriptPreviewFile(id: output, url: output, displayName: displayName))
+                files.append(TranscriptPreviewFile(
+                    id: output,
+                    url: output,
+                    displayName: output.lastPathComponent
+                ))
             }
         }
         guard let last = files.last else { return }
@@ -701,6 +797,9 @@ final class AppModel: ObservableObject {
         isCancelling = false
         transcriptionTask = nil
         keepAwakeToken = nil
+        activePhase = nil
+        activeSnapshot = nil
+        runEffectiveMode = nil
         await completionNotifier.notifyBatchFinished(
             successCount: successCount,
             failureCount: failureCount,
@@ -802,17 +901,6 @@ final class AppModel: ObservableObject {
         }
         return ""
     }
-}
-
-private struct AppConfigurationSnapshot {
-    let inputFiles: [URL]
-    let outputDirectoryPath: String
-    let whisperCLIPath: String
-    let modelPath: String
-    let accelerationMode: AccelerationMode
-    let outputFormats: Set<OutputFormat>
-    let sourceLanguage: String
-    let translatesToEnglish: Bool
 }
 
 private enum Keys {
