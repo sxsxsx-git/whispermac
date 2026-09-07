@@ -1,0 +1,82 @@
+name: Main release build
+
+# Every push to main builds the app bundle (pinned whisper.cpp runtime,
+# ad-hoc signed) and publishes it two ways:
+#   1. a workflow artifact per run (kept 90 days, per-commit history)
+#   2. a rolling prerelease tagged `main-build`, replaced on each push and
+#      marked prerelease so it never shadows the latest stable release
+# Versioned stable releases stay manual: push a `v*` tag and publish by hand.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: main-release-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build app and publish rolling prerelease
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (full history for version and build number)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          cmake --version | head -1
+          swift --version 2>&1 | head -1
+
+      - name: Build pinned whisper.cpp runtime
+        run: ./scripts/setup-whispercpp.sh
+
+      - name: Compute version
+        id: ver
+        run: |
+          # Only real v* tags seed the version; the rolling `main-build`
+          # release tag must never be picked up as the base.
+          BASE="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//' || true)"
+          BASE="${BASE:-0.1.1}"
+          SHA="$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+          VERSION="${BASE}-main.${SHA}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version: ${VERSION}"
+
+      - name: Build WhisperMac.app
+        env:
+          WHISPERMAC_VERSION: ${{ steps.ver.outputs.version }}
+        run: ./scripts/build-app-bundle.sh
+
+      - name: Create release assets (zip + sha256)
+        run: ./scripts/create-release-assets.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Upload assets as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperMac-${{ steps.ver.outputs.version }}
+          path: dist/release-assets/*
+          if-no-files-found: error
+
+      - name: Publish rolling prerelease (tag: main-build)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # Replace the previous rolling build; keep exactly one `main-build`
+          # prerelease alive so the Releases page stays clean.
+          gh release delete main-build --yes --cleanup-tag 2>/dev/null || true
+          NOTES="$(printf 'Automated build of main @ %s.\n\n- Version: %s\n- Ad-hoc signed, not notarized; see the README installation notes for the Gatekeeper workaround.\n- Replaced automatically on every push to main.' "$GITHUB_SHA" "$VERSION")"
+          gh release create main-build dist/release-assets/* \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Main branch build (${VERSION})" \
+            --notes "$NOTES"
