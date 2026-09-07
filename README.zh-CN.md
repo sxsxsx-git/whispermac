@@ -26,7 +26,7 @@ Metal GPU 加速，可选 Core ML / 苹果神经网络引擎（ANE）encoder。
 
 [安装指南](docs/installation.md) · [常见问题](docs/faq.md) · [产品定位](docs/positioning.md) · [参与贡献](CONTRIBUTING.md) · [发布版本](https://github.com/sxsxsx-git/whispermac/releases)
 
-<img src="docs/screenshots/ui-p0/02-ready-zh-dark.png" width="840" alt="WhisperMac 就绪状态" />
+<img src="docs/screenshots/ui-p0/02-ready-zh-light.png" width="840" alt="WhisperMac 就绪状态" />
 
 **如果这个项目对你有帮助，欢迎点一个 Star ★ —— 这是对项目继续维护最明确的信号。**
 
@@ -133,7 +133,7 @@ swift run
 
 | 就绪（中文） | 运行中 | 完成（日本語） |
 | :---: | :---: | :---: |
-| <img src="docs/screenshots/ui-p0/02-ready-zh-dark.png" width="280" alt="就绪状态" /> | <img src="docs/screenshots/ui-p0/03-running-zh-dark.png" width="280" alt="运行状态" /> | <img src="docs/screenshots/ui-p0/05-complete-ja-dark.png" width="280" alt="完成状态" /> |
+| <img src="docs/screenshots/ui-p0/02-ready-zh-light.png" width="280" alt="就绪状态" /> | <img src="docs/screenshots/ui-p0/03-running-zh-light.png" width="280" alt="运行状态" /> | <img src="docs/screenshots/ui-p0/05-complete-ja-light.png" width="280" alt="完成状态" /> |
 
 窗口骨架（工具栏 / 任务队列 / 底部动作栏）保持稳定，右侧工作区在准备、运行、
 结果三种状态之间切换。

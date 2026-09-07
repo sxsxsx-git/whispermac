@@ -26,7 +26,7 @@ Metal GPU acceleration, and an optional Core ML / Apple Neural Engine encoder.
 
 [Installation](docs/installation.md) · [FAQ](docs/faq.md) · [Comparison](docs/positioning.md) · [Contributing](CONTRIBUTING.md) · [Releases](https://github.com/sxsxsx-git/whispermac/releases)
 
-<img src="docs/screenshots/ui-p0/04b-complete-en-dark.png" width="840" alt="WhisperMac completing a transcription batch" />
+<img src="docs/screenshots/ui-p0/04b-complete-en-light.png" width="840" alt="WhisperMac completing a transcription batch" />
 
 **If this repo helps you, please star it ★ — that is the clearest signal the project is worth continuing.**
 
@@ -139,7 +139,7 @@ media files ──▶ afconvert (16 kHz mono WAV) ──▶ whisper-cli ──�
 
 | Ready (中文) | Running | Complete (日本語) |
 | :---: | :---: | :---: |
-| <img src="docs/screenshots/ui-p0/02-ready-zh-dark.png" width="280" alt="Ready state" /> | <img src="docs/screenshots/ui-p0/03-running-zh-dark.png" width="280" alt="Running state" /> | <img src="docs/screenshots/ui-p0/05-complete-ja-dark.png" width="280" alt="Complete state" /> |
+| <img src="docs/screenshots/ui-p0/02-ready-zh-light.png" width="280" alt="Ready state" /> | <img src="docs/screenshots/ui-p0/03-running-zh-light.png" width="280" alt="Running state" /> | <img src="docs/screenshots/ui-p0/05-complete-ja-light.png" width="280" alt="Complete state" /> |
 
 The window skeleton (toolbar / task queue / bottom action bar) stays put while
 the right-hand workspace switches between setup, running, and result states.
