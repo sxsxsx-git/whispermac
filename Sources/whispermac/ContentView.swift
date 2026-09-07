@@ -1,39 +1,58 @@
 import SwiftUI
 
+/// P0.2 window skeleton: fixed 236 pt task queue on the left, a state-driven
+/// main workspace on the right, and a persistent 80 pt action bar at the
+/// bottom. Toolbar carries add-media / history / settings; logs, history, and
+/// outputs open as sheets on demand.
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var isDropTargeted = false
+    @State private var presentedSheet: PresentedSheet?
     @State private var isClearHistoryConfirmationPresented = false
 
-    private let contentMaxWidth: CGFloat = 1080
-    private let fieldLabelWidth: CGFloat = 108
+    enum PresentedSheet: String, Identifiable {
+        case settings
+        case history
+        case logs
+        case allOutputs
+
+        var id: String { rawValue }
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                fileSection
-                outputSection
-                toolSection
-                actionSection
-                if model.isRunning {
-                    liveTranscriptSection
-                }
-                if !model.previewFiles.isEmpty {
-                    previewSection
-                }
-                logSection
-                if !model.historyEntries.isEmpty {
-                    historySection
-                }
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                TaskQueueView()
+                Divider()
+                mainWorkspace
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        if isDropTargeted {
+                            RoundedRectangle(cornerRadius: 0)
+                                .fill(Color.accentColor.opacity(0.06))
+                            RoundedRectangle(cornerRadius: 0)
+                                .strokeBorder(Color.accentColor, lineWidth: 2)
+                        }
+                    }
             }
-            .frame(maxWidth: contentMaxWidth, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 24)
+            PersistentActionBar(
+                openLogs: { presentedSheet = .logs },
+                openSettings: { presentedSheet = .settings }
+            )
         }
         .id(model.appLanguage)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .toolbar { toolbarContent }
+        .sheet(item: $presentedSheet) { sheet in
+            presentedSheetView(sheet)
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !model.isRunning else { return false }
+            model.addMediaURLs(urls)
+            return true
+        } isTargeted: { targeted in
+            isDropTargeted = targeted && !model.isRunning
+        }
         .onAppear {
             model.promptToDownloadMissingRuntimeIfNeeded()
         }
@@ -53,408 +72,623 @@ struct ContentView: View {
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("WhisperMac")
-                    .font(.system(size: 30, weight: .bold))
-                Text(L.tr("app.subtitle"))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    // MARK: workspace switch
+
+    @ViewBuilder private var mainWorkspace: some View {
+        switch model.mainContentState {
+        case let .running(phase):
+            RunWorkspaceView(phase: phase)
+        case .downloadingRuntime:
+            DownloadWorkspaceView()
+        case let .finished(outcome):
+            RunResultView(
+                outcome: outcome,
+                openLogs: { presentedSheet = .logs },
+                openAllOutputs: { presentedSheet = .allOutputs }
+            )
+        case let .setup(readiness):
+            SetupWorkspaceView(
+                readiness: readiness,
+                openSettings: { presentedSheet = .settings }
+            )
+        }
+    }
+
+    // MARK: toolbar
+
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button {
+                model.chooseInputFiles()
+            } label: {
+                Label(L.tr("button.add_media"), systemImage: "plus")
+            }
+            .disabled(model.isRunning)
+            .keyboardShortcut("o")
+            .accessibilityHint(Text(model.isRunning ? L.tr("queue.locked") : L.tr("empty.drop.detail")))
+
+            Button {
+                presentedSheet = .history
+            } label: {
+                Label(L.tr("button.history"), systemImage: "clock.arrow.circlepath")
             }
 
-            Spacer()
+            Button {
+                presentedSheet = .settings
+            } label: {
+                Label(L.tr("button.settings"), systemImage: "gearshape")
+            }
+        }
+    }
 
-            VStack(alignment: .trailing, spacing: 10) {
-                Text(L.tr("label.interface_language"))
+    // MARK: sheets
+
+    @ViewBuilder private func presentedSheetView(_ sheet: PresentedSheet) -> some View {
+        switch sheet {
+        case .settings:
+            SettingsSheet()
+        case .history:
+            HistorySheet(isClearConfirmationPresented: $isClearHistoryConfirmationPresented)
+        case .logs:
+            LogsSheet()
+        case .allOutputs:
+            AllOutputsSheet()
+        }
+    }
+}
+
+// MARK: - Task queue (left column)
+
+struct TaskQueueView: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var isLocked: Bool { model.isRunning }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(L.tr("queue.title"))
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text(L.tr("label.file_count", model.inputFiles.count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
 
-                Menu {
-                    ForEach(AppLanguage.allCases) { language in
-                        Button {
-                            model.appLanguage = language
-                        } label: {
-                            if model.appLanguage == language {
-                                Label(language.displayName, systemImage: "checkmark")
-                            } else {
-                                Text(language.displayName)
-                            }
-                        }
-                    }
+            if model.inputFiles.isEmpty {
+                VStack(spacing: 6) {
+                    Text(L.tr("queue.empty.title"))
+                        .font(.system(size: 13))
+                    Text(L.tr("queue.empty.detail"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, alignment: .center)
+                Spacer()
+            } else {
+                List(model.inputFiles, id: \.path) { url in
+                    queueRow(url)
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+
+            Divider()
+            footer
+        }
+        .frame(width: TaskWorkspaceMetrics.queueWidth)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(L.tr("queue.title")))
+    }
+
+    private func queueRow(_ url: URL) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconForExtension(url.pathExtension))
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(url.lastPathComponent)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(url.deletingLastPathComponent().path)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 0)
+
+            if !isLocked {
+                Button {
+                    model.removeInputFile(url)
                 } label: {
-                    HStack(spacing: 6) {
-                        Text(model.appLanguage.displayName)
-                        Image(systemName: "chevron.down")
-                            .font(.caption2)
-                    }
-                    .frame(width: 150, alignment: .leading)
-                }
-
-                HStack(spacing: 10) {
-                    Button(L.tr("button.view_readme")) {
-                        model.openProjectREADME()
-                    }
-
-                    Button(L.tr("button.star_on_github")) {
-                        model.openProjectRepository()
-                    }
-                }
-            }
-        }
-    }
-
-    private var fileSection: some View {
-        GroupBox(L.tr("section.input_files")) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Button(L.tr("button.add_media")) {
-                        model.chooseInputFiles()
-                    }
-                    Button(L.tr("button.clear_list")) {
-                        model.clearInputFiles()
-                    }
-                    .disabled(model.inputFiles.isEmpty || model.isBusy)
-                    Spacer()
-                    Text(L.tr("label.file_count", model.inputFiles.count))
+                    Image(systemName: "xmark.circle")
                         .foregroundStyle(.secondary)
                 }
-
-                if model.inputFiles.isEmpty {
-                    Text(L.tr("message.no_files_selected"))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 120)
-                } else {
-                    List(model.inputFiles, id: \.path) { url in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(url.lastPathComponent)
-                                Text(url.path)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Button(L.tr("button.remove")) {
-                                model.removeInputFile(url)
-                            }
-                            .buttonStyle(.borderless)
-                            .disabled(model.isBusy)
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    .frame(minHeight: 160, maxHeight: 200)
-                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(L.tr("button.remove"))
+                .accessibilityValue(Text(url.lastPathComponent))
             }
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isDropTargeted ? Color.accentColor : .clear, lineWidth: isDropTargeted ? 3 : 0)
-                .padding(2)
-        )
-        .dropDestination(for: URL.self) { urls, _ in
-            model.addMediaURLs(urls)
-            return true
-        } isTargeted: { targeted in
-            isDropTargeted = targeted
-        }
+        .padding(.vertical, 8)
+        .help(url.path)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("\(url.lastPathComponent), \(url.deletingLastPathComponent().path)"))
     }
 
-    private var outputSection: some View {
-        GroupBox(L.tr("section.output")) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text(L.tr("label.output_directory"))
-                        .frame(width: fieldLabelWidth, alignment: .leading)
-                    TextField(L.tr("placeholder.output_directory"), text: $model.outputDirectoryPath)
-                        .textFieldStyle(.roundedBorder)
-                    Button(L.tr("button.choose")) {
-                        model.chooseOutputDirectory()
-                    }
-                    .disabled(model.isBusy)
-                }
-
-                Text(model.outputDirectoryDisplayText)
-                    .font(.caption)
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if isLocked {
+                Image(systemName: "lock")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .padding(.leading, fieldLabelWidth)
+                Text(L.tr("queue.locked"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(L.tr("privacy.local"))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button(L.tr("button.clear_list")) {
+                model.clearInputFiles()
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .disabled(model.inputFiles.isEmpty || model.isBusy)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
 
-                HStack(alignment: .center, spacing: 14) {
-                    Text(L.tr("label.export_formats"))
-                        .frame(width: fieldLabelWidth, alignment: .leading)
+    private func iconForExtension(_ pathExtension: String) -> String {
+        let videoExtensions: Set<String> = ["mp4", "mov", "m4v"]
+        return videoExtensions.contains(pathExtension.lowercased()) ? "film" : "music.note"
+    }
+}
 
-                    Toggle(L.tr("toggle.export_txt"), isOn: outputBinding(for: .txt))
-                    Toggle(L.tr("toggle.export_srt"), isOn: outputBinding(for: .srt))
-                    Toggle(L.tr("toggle.export_vtt"), isOn: outputBinding(for: .vtt))
-                    Toggle(L.tr("toggle.export_json"), isOn: outputBinding(for: .json))
+// MARK: - Persistent action bar (bottom)
 
-                    Spacer(minLength: 8)
+struct PersistentActionBar: View {
+    @EnvironmentObject private var model: AppModel
+    let openLogs: () -> Void
+    let openSettings: () -> Void
 
-                    Button(L.tr("button.open_output_directory")) {
-                        model.openOutputDirectory()
-                    }
-                    .disabled(model.inputFiles.isEmpty && model.outputDirectoryPath.isEmpty)
-                    .fixedSize()
-                }
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var barHeight: CGFloat {
+        dynamicTypeSize >= .xLarge ? 96 : 80
+    }
+
+    var body: some View {
+        HStack(spacing: 16) {
+            leading
+            Spacer()
+            trailing
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, minHeight: barHeight, maxHeight: barHeight, alignment: .center)
+        .background {
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(height: 1)
+                Spacer()
             }
         }
     }
 
-    private var toolSection: some View {
-        GroupBox(L.tr("section.runtime")) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
+    // MARK: leading status
+
+    @ViewBuilder private var leading: some View {
+        switch model.mainContentState {
+        case let .running(phase):
+            runningLeading(phase)
+        case .downloadingRuntime:
+            downloadLeading
+        case let .finished(outcome):
+            switch outcome {
+            case let .succeeded(inputFileCount, _):
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color(nsColor: .systemGreen))
+                    Text(L.tr("bar.done_files", inputFileCount))
+                        .font(.system(size: 13, weight: .medium))
+                }
+            case let .failed(summary):
+                HStack(spacing: 8) {
+                    Image(systemName: "xmark.octagon.fill")
+                        .foregroundStyle(Color(nsColor: .systemRed))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L.tr("bar.failure"))
+                            .font(.system(size: 13, weight: .medium))
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(summary)
+                    }
+                }
+            case .cancelled:
+                HStack(spacing: 8) {
+                    Image(systemName: "minus.circle")
+                        .foregroundStyle(.secondary)
+                    Text(L.tr("bar.cancelled"))
+                        .font(.system(size: 13, weight: .medium))
+                }
+            }
+        case let .setup(readiness):
+            setupLeading(readiness)
+        }
+    }
+
+    private func runningLeading(_ phase: ActiveRunPhase) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(stageTitle(phase))
+                .font(.system(size: 13, weight: .medium))
+            HStack(spacing: 10) {
+                if phase == .stopping {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    ProgressView(value: model.overallProgress)
+                        .frame(width: 220)
+                    Text(progressCaption(phase))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(stageTitle(phase)))
+    }
+
+    private func stageTitle(_ phase: ActiveRunPhase) -> String {
+        switch phase {
+        case let .preparingInputs(currentIndex, total):
+            let nextIndex = min(currentIndex + 1, max(total, 1))
+            let fileName = model.currentFileName
+            if fileName.isEmpty {
+                return L.tr("status.processing", nextIndex, total)
+            }
+            return L.tr("bar.stage.preparing", nextIndex, total, fileName)
+        case let .transcribingBatch(totalFiles):
+            return L.tr("bar.stage.transcribing", totalFiles)
+        case .stopping:
+            return L.tr("bar.stage.stopping")
+        }
+    }
+
+    /// The bar is the 18% preprocessing / 82% whisper estimate; the caption
+    /// keeps the "estimated" qualifier so 100% is never read as success.
+    private func progressCaption(_ phase: ActiveRunPhase) -> String {
+        switch phase {
+        case .preparingInputs:
+            return L.tr("bar.progress.estimated_percent", Int(model.overallProgress * 100))
+        case .transcribingBatch:
+            return L.tr("bar.progress.estimated_percent", Int(model.currentTranscriptionProgress * 100))
+        case .stopping:
+            return ""
+        }
+    }
+
+    private var downloadLeading: some View {
+        HStack(spacing: 10) {
+            if let progress = model.downloadProgress {
+                ProgressView(value: progress)
+                    .frame(width: 220)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Text(model.statusText)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(2)
+        }
+    }
+
+    private func setupLeading(_ readiness: SetupReadiness) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(setupStatusLine(readiness))
+                .font(.system(size: 13, weight: .medium))
+            Text(L.tr("privacy.local"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func setupStatusLine(_ readiness: SetupReadiness) -> String {
+        if model.isDownloadingRuntime {
+            return model.statusText
+        }
+        if let reason = model.startDisabledReason {
+            return disabledReasonText(reason)
+        }
+        return L.tr("bar.ready_files", model.inputFiles.count)
+    }
+
+    private func disabledReasonText(_ reason: StartDisabledReason) -> String {
+        switch reason {
+        case .running, .downloadingRuntime:
+            return model.statusText
+        case .noInputFiles:
+            return L.tr("bar.reason.add_media")
+        case .missingWhisperCLI:
+            return L.tr("bar.reason.cli")
+        case .missingModel:
+            return L.tr("bar.reason.model")
+        case .noOutputFormats:
+            return L.tr("bar.reason.formats")
+        }
+    }
+
+    // MARK: trailing actions
+
+    @ViewBuilder private var trailing: some View {
+        switch model.mainContentState {
+        case .running:
+            runningTrailing
+        case .downloadingRuntime:
+            Button(L.tr("button.cancel_download"), role: .destructive) {
+                model.cancelRuntimeDownload()
+            }
+            .buttonStyle(.bordered)
+        case let .finished(outcome):
+            switch outcome {
+            case .succeeded:
+                successTrailing
+            case .failed:
+                Button(L.tr("bar.view_logs"), action: openLogs)
+                    .buttonStyle(.bordered)
+                Button(L.tr("result.retry")) {
+                    model.startTranscription()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canStart)
+            case .cancelled:
+                Button(L.tr("options.adjust")) {
+                    model.dismissOutcome()
+                }
+                .buttonStyle(.bordered)
+                Button(L.tr("result.start_again")) {
+                    model.startTranscription()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canStart)
+            }
+        case .setup:
+            setupTrailing
+        }
+    }
+
+    private var runningTrailing: some View {
+        HStack(spacing: 12) {
+            Button(L.tr("bar.view_logs"), action: openLogs)
+                .buttonStyle(.bordered)
+
+            // Deliberately a plain destructive bordered button, never a blue
+            // prominent one; it is the only destructive action of a run.
+            Button(role: .destructive) {
+                model.cancelTranscription()
+            } label: {
+                Text(L.tr("button.stop"))
+            }
+            .buttonStyle(.bordered)
+            .disabled(model.isCancelling)
+        }
+    }
+
+    private var successTrailing: some View {
+        HStack(spacing: 12) {
+            Button(L.tr("result.new_task")) {
+                model.dismissOutcome()
+            }
+            .buttonStyle(.bordered)
+
+            Button {
+                model.revealSelectedResultInFinder()
+            } label: {
+                Label(
+                    model.previewFiles.isEmpty
+                        ? L.tr("result.show_selected_output")
+                        : L.tr("result.show_selected_subtitle"),
+                    systemImage: "folder"
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(revealTargetURL == nil)
+        }
+    }
+
+    private var revealTargetURL: URL? {
+        model.selectedPreviewFileID ?? model.selectedResultFileID ?? model.lastRunOutputFiles.first
+    }
+
+    private var setupTrailing: some View {
+        Button(L.tr("button.start_transcription")) {
+            model.startTranscription()
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(model.startDisabledReason != nil)
+        .accessibilityValue(Text(setupAccessibilityValue))
+    }
+
+    private var setupAccessibilityValue: String {
+        if let reason = model.startDisabledReason {
+            return disabledReasonText(reason)
+        }
+        return L.tr("bar.ready_files", model.inputFiles.count)
+    }
+}
+
+// MARK: - Settings sheet
+
+struct SettingsSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text(L.tr("button.settings"))
+                .font(.system(size: 22, weight: .semibold))
+
+            GroupBox(L.tr("settings.section.general")) {
+                HStack {
+                    Text(L.tr("label.interface_language"))
+                        .frame(width: 104, alignment: .leading)
+                    Picker(L.tr("label.interface_language"), selection: $model.appLanguage) {
+                        ForEach(AppLanguage.allCases) { language in
+                            Text(language.displayName).tag(language)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 200, alignment: .leading)
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox(L.tr("settings.section.paths")) {
+                VStack(spacing: 12) {
+                    pathRow(title: L.tr("field.whisper_cli"), text: $model.whisperCLIPath) {
+                        model.chooseWhisperCLI()
+                    }
+                    pathRow(title: L.tr("field.model_file"), text: $model.modelPath) {
+                        model.chooseModel()
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox(L.tr("section.runtime")) {
+                VStack(alignment: .leading, spacing: 10) {
                     Picker(L.tr("label.acceleration_mode"), selection: $model.accelerationMode) {
                         ForEach(AccelerationMode.allCases, id: \.self) { mode in
                             Text(mode.title).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
-                    .disabled(model.isBusy)
-                    .frame(maxWidth: 320, alignment: .leading)
-
-                    Spacer()
-                }
-
-                Text(model.accelerationDetail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(alignment: .center, spacing: 14) {
-                    Text(L.tr("label.audio_language"))
-                        .frame(width: fieldLabelWidth, alignment: .leading)
-
-                    Picker(L.tr("label.audio_language"), selection: $model.sourceLanguage) {
-                        Text(WhisperLanguage.auto.displayName).tag(WhisperLanguage.autoCode)
-                        ForEach(WhisperLanguage.common) { language in
-                            Text(language.displayName).tag(language.code)
-                        }
-                    }
-                    .pickerStyle(.menu)
                     .labelsHidden()
-                    .frame(width: 150, alignment: .leading)
+                    .frame(width: 280, alignment: .leading)
                     .disabled(model.isBusy)
 
-                    Toggle(L.tr("toggle.translate_to_english"), isOn: $model.translatesToEnglish)
-                        .disabled(model.isBusy)
-
-                    Spacer()
-                }
-
-                Text(L.tr("hint.translate_to_english"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, fieldLabelWidth)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                toolPathRow(title: L.tr("field.whisper_cli"), text: $model.whisperCLIPath) {
-                    model.chooseWhisperCLI()
-                }
-                toolPathRow(title: L.tr("field.model_file"), text: $model.modelPath) {
-                    model.chooseModel()
-                }
-
-                Text(L.tr("hint.audio_preprocessor"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(model.accelerationSummary)
-                    .font(.callout)
-                    .foregroundStyle(model.configurationLooksReady ? Color.secondary : Color.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !model.configurationLooksReady || model.isDownloadingRuntime {
-                    HStack(spacing: 12) {
-                        if model.isDownloadingRuntime {
-                            if let progress = model.downloadProgress {
-                                ProgressView(value: progress)
-                                    .progressViewStyle(.linear)
-                                    .frame(maxWidth: 260)
-                            } else {
-                                ProgressView()
-                                    .controlSize(.small)
-                            }
-                            Text(model.statusText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Button(L.tr("button.cancel_download"), role: .destructive) {
-                                model.cancelRuntimeDownload()
-                            }
-                        } else if !model.downloadableRuntimeComponents.isEmpty {
-                            Button(L.tr("button.download_runtime")) {
-                                model.promptToDownloadMissingRuntime(force: true)
-                            }
-                        } else {
-                            Text(L.tr("hint.whisper_cli_manual"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                }
-            }
-        }
-    }
-
-    private var actionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 14) {
-                Button(model.isRunning ? L.tr("button.transcribing") : L.tr("button.start_transcription")) {
-                    model.startTranscription()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.canStart)
-
-                if model.isRunning {
-                    Button(L.tr("button.stop"), role: .destructive) {
-                        model.cancelTranscription()
-                    }
-                    .disabled(model.isCancelling)
-                }
-
-                if !model.statusText.isEmpty {
-                    Text(model.statusText)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-
-            if model.isRunning || model.overallProgress > 0 {
-                VStack(alignment: .leading, spacing: 8) {
-                    ProgressView(value: model.overallProgress) {
-                        Text(L.tr("label.overall_progress"))
-                    } currentValueLabel: {
-                        Text("\(Int(model.overallProgress * 100))%")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ProgressView(value: model.currentFileProgress) {
-                        Text(model.currentFileName.isEmpty ? L.tr("label.current_file") : model.currentFileName)
-                    } currentValueLabel: {
-                        Text(model.currentStageDescription.isEmpty ? "\(Int(model.currentFileProgress * 100))%" : model.currentStageDescription)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-
-    private var liveTranscriptSection: some View {
-        GroupBox(L.tr("section.live_transcript")) {
-            VStack(alignment: .leading, spacing: 10) {
-                if model.liveSegments.isEmpty {
-                    Text(L.tr("live.waiting"))
+                    Text(model.accelerationDetail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 6) {
-                                ForEach(model.liveSegments) { segment in
-                                    HStack(alignment: .top, spacing: 10) {
-                                        Text(segment.displayTimestamp)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 64, alignment: .leading)
-                                        Text(segment.text)
-                                            .font(.callout)
-                                            .textSelection(.enabled)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                    .id(segment.id)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 260)
-                        .onChange(of: model.liveSegments.last?.id) { _, latestID in
-                            guard let latestID else { return }
-                            proxy.scrollTo(latestID, anchor: .bottom)
-                        }
-                    }
-                }
+                        .fixedSize(horizontal: false, vertical: true)
 
-                Text(L.tr("live.segment_count", model.liveSegments.count))
+                    Text(model.accelerationSummary)
+                        .font(.callout)
+                        .foregroundStyle(
+                            model.configurationLooksReady
+                                ? AnyShapeStyle(.secondary)
+                                : AnyShapeStyle(Color(nsColor: .systemOrange))
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    downloadStatusRow
+                }
+                .padding(.vertical, 4)
+            }
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Text(L.tr("settings.section.help"))
+                    .font(.headline)
+                Button(L.tr("button.view_readme")) {
+                    model.openProjectREADME()
+                }
+                Button(L.tr("button.star_on_github")) {
+                    model.openProjectRepository()
+                }
+                Spacer()
+                Button(L.tr("button.done")) {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 640, alignment: .topLeading)
+    }
+
+    @ViewBuilder private var downloadStatusRow: some View {
+        if model.isDownloadingRuntime {
+            HStack(spacing: 12) {
+                if let progress = model.downloadProgress {
+                    ProgressView(value: progress)
+                        .frame(width: 200)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(model.statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Button(L.tr("button.cancel_download"), role: .destructive) {
+                    model.cancelRuntimeDownload()
+                }
+            }
+        } else if !model.downloadableRuntimeComponents.isEmpty {
+            HStack(spacing: 12) {
+                Button(L.tr("button.download_runtime")) {
+                    model.startRuntimeDownload()
+                }
+                Text(L.tr("privacy.download"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var previewSection: some View {
-        GroupBox(L.tr("section.preview")) {
-            VStack(alignment: .leading, spacing: 10) {
-                if model.previewFiles.count > 1 {
-                    Picker(L.tr("section.preview"), selection: previewSelection) {
-                        ForEach(model.previewFiles) { file in
-                            Text(file.displayName).tag(Optional(file.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: 320, alignment: .leading)
-                }
-
-                if model.isLoadingPreview {
-                    HStack {
-                        ProgressView()
-                            .controlSize(.small)
-                        Spacer()
-                    }
-                } else if model.previewSegments.isEmpty {
-                    Text(L.tr("preview.unavailable"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(model.previewSegments) { segment in
-                                HStack(alignment: .top, spacing: 10) {
-                                    Text(segment.displayTimestamp)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 64, alignment: .leading)
-                                    Text(segment.text)
-                                        .font(.callout)
-                                        .textSelection(.enabled)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 260)
-                }
-            }
+    private func pathRow(title: String, text: Binding<String>, choose: @escaping () -> Void) -> some View {
+        HStack {
+            Text(title)
+                .frame(width: 104, alignment: .leading)
+            TextField("", text: text)
+                .textFieldStyle(.roundedBorder)
+            Button(L.tr("button.choose"), action: choose)
+                .disabled(model.isBusy)
         }
     }
+}
 
-    private var previewSelection: Binding<URL?> {
-        Binding(
-            get: { model.selectedPreviewFileID },
-            set: { model.selectPreviewFile(id: $0) }
-        )
-    }
+// MARK: - History sheet
 
-    private var logSection: some View {
-        GroupBox(L.tr("section.logs")) {
-            ScrollView {
-                Text(model.logsText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(.vertical, 6)
-            }
-            .frame(minHeight: 160, maxHeight: 220)
-        }
-    }
+struct HistorySheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Binding var isClearConfirmationPresented: Bool
 
-    private var historySection: some View {
-        GroupBox(L.tr("section.history")) {
-            VStack(alignment: .leading, spacing: 10) {
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(L.tr("section.history"))
+                .font(.system(size: 22, weight: .semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+
+            if model.historyEntries.isEmpty {
+                Text(L.tr("history.empty"))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
                 List(model.historyEntries) { entry in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -472,46 +706,135 @@ struct ContentView: View {
                     .padding(.vertical, 2)
                 }
                 .listStyle(.plain)
-                .frame(minHeight: 80, maxHeight: 200)
+            }
 
-                HStack {
-                    Spacer()
-                    Button(L.tr("button.clear_history"), role: .destructive) {
-                        isClearHistoryConfirmationPresented = true
+            Divider()
+            HStack {
+                Spacer()
+                Button(L.tr("button.clear_history"), role: .destructive) {
+                    isClearConfirmationPresented = true
+                }
+                .disabled(model.historyEntries.isEmpty)
+                Button(L.tr("button.done")) {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
+        }
+        .frame(width: 560, height: 440)
+        .confirmationDialog(
+            L.tr("alert.clear_history_title"),
+            isPresented: $isClearConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button(L.tr("button.clear_history_confirm"), role: .destructive) {
+                model.clearHistory()
+            }
+            Button(L.tr("button.not_now"), role: .cancel) {}
+        }
+    }
+}
+
+// MARK: - Logs sheet
+
+struct LogsSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(L.tr("section.logs"))
+                .font(.system(size: 22, weight: .semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+
+            Divider()
+
+            ScrollView {
+                Text(model.logsText)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+
+            Divider()
+            HStack {
+                Spacer()
+                Button(L.tr("button.done")) {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
+        }
+        .frame(width: 680, height: 500)
+    }
+}
+
+// MARK: - All outputs sheet
+
+struct AllOutputsSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(L.tr("sheet.all_outputs.title"))
+                .font(.system(size: 22, weight: .semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+
+            if model.lastRunOutputFiles.isEmpty {
+                Text(L.tr("sheet.all_outputs.empty"))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                List(model.lastRunOutputFiles, id: \.self) { url in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(url.lastPathComponent)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(url.deletingLastPathComponent().path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        Text(url.pathExtension.uppercased())
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
+                        Button(L.tr("button.reveal_in_finder")) {
+                            model.revealOutputFileInFinder(url)
+                        }
+                        .buttonStyle(.borderless)
                     }
+                    .padding(.vertical, 2)
                 }
+                .listStyle(.plain)
             }
-            .confirmationDialog(
-                L.tr("alert.clear_history_title"),
-                isPresented: $isClearHistoryConfirmationPresented,
-                titleVisibility: .visible
-            ) {
-                Button(L.tr("button.clear_history_confirm"), role: .destructive) {
-                    model.clearHistory()
+
+            Divider()
+            HStack {
+                Spacer()
+                Button(L.tr("button.done")) {
+                    dismiss()
                 }
-                Button(L.tr("button.not_now"), role: .cancel) {}
+                .keyboardShortcut(.defaultAction)
             }
+            .padding(20)
         }
-    }
-
-    private func toolPathRow(title: String, text: Binding<String>, action: @escaping () -> Void) -> some View {
-        HStack {
-            Text(title)
-                .frame(width: fieldLabelWidth, alignment: .leading)
-            TextField("", text: text)
-                .textFieldStyle(.roundedBorder)
-            Button(L.tr("button.choose"), action: action)
-                .disabled(model.isBusy)
-        }
-    }
-
-    private func outputBinding(for format: OutputFormat) -> Binding<Bool> {
-        Binding(
-            get: { model.outputFormats.contains(format) },
-            set: { enabled in
-                model.setFormat(format, enabled: enabled)
-            }
-        )
+        .frame(width: 620, height: 440)
     }
 }
 
