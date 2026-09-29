@@ -23,6 +23,7 @@ enum ActiveRunPhase: Equatable {
 /// implies `.succeeded`.
 enum TaskOutcome: Equatable {
     case succeeded(inputFileCount: Int, outputFiles: [URL])
+    case noSpeech(fileNames: [String], outputFiles: [URL])
     case failed(summary: String)
     case cancelled
 }
@@ -32,6 +33,7 @@ enum TaskOutcome: Equatable {
 enum SetupReadiness: Equatable {
     case emptyQueue
     case missingRuntime(blockers: Set<RuntimeComponent>)
+    case missingVADModel(path: String)
     case ready
 }
 
@@ -44,6 +46,35 @@ enum MainContentState: Equatable {
     case setup(SetupReadiness)
 }
 
+enum ActiveDownload: Equatable {
+    case runtime
+    case vadModel
+}
+
+enum CoreMLRuntimeStatus: Equatable {
+    case notRequested
+    case loading
+    case loaded
+    case failed
+}
+
+enum RuntimeAccelerationSignal: Equatable {
+    case coreMLLoaded
+    case coreMLFailed
+
+    static func parse(_ line: String) -> RuntimeAccelerationSignal? {
+        let normalized = line.lowercased()
+        guard normalized.contains("core ml") || normalized.contains("coreml") else { return nil }
+        if normalized.contains("failed") || normalized.contains("error") || normalized.contains("could not load") {
+            return .coreMLFailed
+        }
+        if normalized.contains("model loaded") || normalized.contains("loaded core ml") {
+            return .coreMLLoaded
+        }
+        return nil
+    }
+}
+
 /// Why "Start Transcription" cannot run right now; `nil` means enabled.
 /// Ordering mirrors the historical `canStart` checks.
 enum StartDisabledReason: Equatable {
@@ -52,10 +83,19 @@ enum StartDisabledReason: Equatable {
     case noInputFiles
     case missingWhisperCLI
     case missingModel
+    case missingVADModel
+    case checkingVADCLI
+    case unsupportedVADCLI
     case noOutputFormats
 }
 
 enum TaskPresentation {
+    static func activeDownload(isDownloadingRuntime: Bool, isDownloadingVADModel: Bool) -> ActiveDownload? {
+        if isDownloadingVADModel { return .vadModel }
+        if isDownloadingRuntime { return .runtime }
+        return nil
+    }
+
     /// Pure mapping from model facts to the main workspace state.
     static func mainContent(
         isRunning: Bool,
@@ -64,7 +104,9 @@ enum TaskPresentation {
         activePhase: ActiveRunPhase?,
         lastOutcome: TaskOutcome?,
         inputCount: Int,
-        blockingRuntimeComponents: Set<RuntimeComponent>
+        blockingRuntimeComponents: Set<RuntimeComponent>,
+        vadModelMissing: Bool = false,
+        vadModelPath: String = VADModelResolver.downloadedModelURL.path
     ) -> MainContentState {
         if isRunning {
             if isCancelling {
@@ -92,6 +134,7 @@ enum TaskPresentation {
         // Blocking runtime components outrank the empty-queue hint: a first
         // launch without a model must lead with the fix, not the invitation.
         if blockingRuntimeComponents.isEmpty {
+            if vadModelMissing { return .setup(.missingVADModel(path: vadModelPath)) }
             return inputCount == 0 ? .setup(.emptyQueue) : .setup(.ready)
         }
         return .setup(.missingRuntime(blockers: blockingRuntimeComponents))
@@ -104,7 +147,10 @@ enum TaskPresentation {
         inputCount: Int,
         hasWhisperCLI: Bool,
         hasModel: Bool,
-        outputFormatCount: Int
+        outputFormatCount: Int,
+        vadEnabled: Bool = false,
+        hasVADModel: Bool = true,
+        vadCLICapability: WhisperCLICapability = .supported
     ) -> StartDisabledReason? {
         if isRunning {
             return .running
@@ -124,6 +170,16 @@ enum TaskPresentation {
         if outputFormatCount == 0 {
             return .noOutputFormats
         }
+        if vadEnabled && !hasVADModel {
+            return .missingVADModel
+        }
+        if vadEnabled {
+            switch vadCLICapability {
+            case .unchecked, .checking: return .checkingVADCLI
+            case .unsupported: return .unsupportedVADCLI
+            case .supported: break
+            }
+        }
         return nil
     }
 }
@@ -139,4 +195,5 @@ struct AppConfigurationSnapshot: Equatable {
     let outputFormats: Set<OutputFormat>
     let sourceLanguage: String
     let translatesToEnglish: Bool
+    let vadSettings: VADSettings
 }

@@ -44,17 +44,19 @@ macOS 应用**：
 - 🖥️ **真正的 Mac 应用** —— SwiftUI 界面，带批量队列、实时文本和历史记录，不是终端的薄壳
 - ⚡ **吃透 Apple Silicon** —— 明确的 `GPU（Metal）` 与 `GPU + ANE（Core ML）` 运行模式，并如实显示实际生效的是哪一种
 - 📦 **一键运行时准备** —— 在应用内下载默认模型和 Core ML encoder，下载带校验
+- 🎙️ **可选 Silero VAD** —— 转写前检测语音、跳过长静音；默认关闭
 - 🌐 **界面本地化** —— English、简体中文、日本語
 
 ## 🎯 功能特性
 
 | | 特性 | 说明 |
 | --- | --- | --- |
-| 🗂 | **批量队列** | 拖入 MP4 / MOV / M4V / M4A / MP3 / WAV / AAC / FLAC，自动去重，开始前可随时移除 |
+| 🗂 | **批量队列** | 拖入媒体文件或文件夹；递归扫描子目录中的支持格式，自动去重，开始前可随时移除 |
 | 📄 | **导出格式** | `TXT` · `SRT` · `VTT` · `JSON` —— 每次任务自由组合 |
 | 🏠 | **输出位置合理** | 默认每个转写结果保存在源文件旁边；也可指定统一输出目录 |
 | ⚡ | **加速模式** | `仅 GPU`（Metal）或 `GPU + ANE`（Metal + Core ML encoder）；缺 encoder 时自动回退 GPU 并提示 |
-| 📥 | **内置运行时下载** | 从 Hugging Face 下载 `ggml-large-v3-turbo` 及 encoder 压缩包，SHA-256 校验、可看进度、可取消 |
+| 📥 | **内置运行时下载** | 下载 `ggml-large-v3-turbo`、encoder 压缩包和可选 VAD 模型；支持官方 Hugging Face、HF-Mirror 和自定义端点 |
+| 🎙️ | **Silero 语音活动检测** | 可选 CPU 语音检测，可调阈值、时长和扩展；在设置中下载约 864 KB 模型 |
 | 📡 | **实时文本** | whisper 工作时逐段流式显示，支持“跟随最新”开关 |
 | 👀 | **SRT 预览** | 批次刚结束就能在应用内直接阅读生成的字幕 |
 | 🕘 | **历史记录** | 最近 100 条成功批次，一键在 Finder 中定位 |
@@ -121,13 +123,16 @@ swift run
 ```
 
 1. WhisperMac 用 macOS 内置的 `afconvert` 把每个输入转成 16 kHz 单声道 PCM WAV —— 不依赖 FFmpeg。
-2. 整个批次通过一次 `whisper.cpp` 调用在你的机器上完成。
-3. 在 Apple Silicon 上，`仅 GPU` 使用 Metal 后端；`GPU + ANE` 在存在匹配的
-   `ggml-large-v3-turbo-encoder.mlmodelc` 时叠加 Core ML encoder。
+2. 启用后，Silero VAD 在 CPU 上先筛选语音区间，再交给 Whisper 转写。默认阈值为 `0.50`、最短语音 `250 ms`、最短静音 `500 ms`、语音扩展 `200 ms`。
+3. `whisper.cpp` 转写筛选后的区间。Metal GPU 和可选 Core ML encoder 仍按配置运行；VAD 使用 CPU 不会关闭这两种加速。
 
 > [!NOTE]
 > 在当前 `whisper.cpp` 架构下，ANE 不会加速完整流水线：Core ML 路径加速的是
 > **encoder**，解码仍使用 GPU/CPU。WhisperMac 始终如实显示实际生效的模式。
+
+VAD 可减少长静音录音的计算量，但可能漏掉轻声讲话或歌声。它只检测语音活动，不会从音乐中分离人声、按语义断句，也不会调用 LLM 校正字幕。详见[安装指南中的 VAD 说明](docs/installation.md#silero-vad)。
+
+将文件夹拖入工作区会递归添加其子目录中的支持媒体。下载源可在**设置 → 模型下载**中选择；若设置了 `WHISPERMAC_HF_ENDPOINT` 环境变量，它会覆盖界面选择。
 
 ## 📸 界面一览
 

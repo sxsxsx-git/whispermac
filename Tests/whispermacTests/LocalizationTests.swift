@@ -68,16 +68,10 @@ struct LocalizationTests {
     }
 }
 
-private let allLocalizationIdentifiers = ["en", "zh-hans", "ja"]
+private let allLocalizationIdentifiers = ["en", "zh-Hans", "ja"]
 
 private func localizationKeys(for identifier: String) throws -> Set<String> {
-    let path = try #require(
-        Bundle.module.path(forResource: "Localizable", ofType: "strings", inDirectory: nil, forLocalization: identifier)
-    )
-    let data = try Data(contentsOf: URL(fileURLWithPath: path))
-    let propertyList = try PropertyListSerialization.propertyList(from: data, format: nil)
-    let table = try #require(propertyList as? [String: String])
-    return Set(table.keys)
+    Set(try localizedStrings(for: identifier).keys)
 }
 
 @Test
@@ -87,17 +81,16 @@ func localizationKeysHaveParityAcrossAllBundles() throws {
         keySets[identifier] = try localizationKeys(for: identifier)
     }
 
-    #expect(keySets["en"] == keySets["zh-hans"])
+    #expect(keySets["en"] == keySets["zh-Hans"])
     #expect(keySets["en"] == keySets["ja"])
 }
 
 @Test(arguments: allLocalizationIdentifiers)
 func audioLanguageAndTranslateKeysResolveInEveryBundle(identifier: String) throws {
-    let path = try #require(Bundle.module.path(forResource: identifier, ofType: "lproj"))
-    let bundle = try #require(Bundle(path: path))
+    let strings = try localizedStrings(for: identifier)
 
     for key in ["language.auto", "label.audio_language", "toggle.translate_to_english", "hint.translate_to_english", "toggle.export_vtt", "toggle.export_json"] {
-        let value = bundle.localizedString(forKey: key, value: "", table: "Localizable")
+        let value = strings[key] ?? ""
         #expect(!value.isEmpty, "\(key) is empty in \(identifier)")
         #expect(value != key, "\(key) is missing from \(identifier)")
     }

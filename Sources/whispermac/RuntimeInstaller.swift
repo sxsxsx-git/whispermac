@@ -44,9 +44,11 @@ enum RuntimeInstaller {
     private static let encoderArchiveFileName = "ggml-large-v3-turbo-encoder.mlmodelc.zip"
     private static let modelMinimumBytes: Int64 = 1_000_000_000
     private static let encoderArchiveMinimumBytes: Int64 = 10_000_000
+    private static let vadRepository = "ggml-org/whisper-vad"
 
     static func install(
         missing components: Set<RuntimeComponent>,
+        baseURL: URL = HuggingFaceEndpoint.defaultBaseURL,
         onEvent: (@Sendable (RuntimeInstallerEvent) async -> Void)? = nil
     ) async throws -> RuntimeInstallResult {
         precondition(!components.contains(.whisperCLI), "whisper-cli must be bundled at packaging time")
@@ -56,14 +58,55 @@ enum RuntimeInstaller {
         var installedModelPath: String?
         if components.contains(.model) || components.contains(.coreMLEncoder) {
             await emit(.log(L.tr("log.runtime_download_component_model")), to: onEvent)
-            installedModelPath = try await installModelAssets(onEvent: onEvent)
+            installedModelPath = try await installModelAssets(baseURL: baseURL, onEvent: onEvent)
         }
 
         await emit(.log(L.tr("log.runtime_download_complete")), to: onEvent)
         return RuntimeInstallResult(modelPath: installedModelPath)
     }
 
+    /// Downloads only the compact Silero VAD model; it does not touch the
+    /// Whisper model or Core ML encoder already installed on the machine.
+    static func installVADModel(
+        baseURL: URL = HuggingFaceEndpoint.defaultBaseURL,
+        onEvent: (@Sendable (RuntimeInstallerEvent) async -> Void)? = nil
+    ) async throws -> String {
+        let modelsDirectory = PathResolver.downloadedRuntimeRoot
+            .appending(path: "Models", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
+        let digestSource = await fetchDigests(baseURL: baseURL, repository: vadRepository, onEvent: onEvent)
+        let modelURL = HuggingFaceEndpoint.assetURL(
+            fileName: VADModelResolver.fileName,
+            baseURL: baseURL,
+            repository: vadRepository
+        )
+        await emit(.status(L.tr("status.runtime_downloading_model")), to: onEvent)
+        await emit(.log(L.tr("log.runtime_download_source", modelURL.absoluteString)), to: onEvent)
+        let expectation = DownloadExpectation(
+            minimumBytes: VADModelResolver.minimumBytes,
+            expectedDigest: digestSource.digests[VADModelResolver.fileName],
+            requiredMagicBytes: VADModelResolver.requiredHeader
+        )
+        let downloadedURL = try await downloadVerified(
+            from: modelURL,
+            expectation: expectation,
+            digestSourceAvailable: digestSource.available,
+            onEvent: onEvent
+        )
+        let destination = modelsDirectory.appending(path: VADModelResolver.fileName)
+        do {
+            try Task.checkCancellation()
+            try replaceItem(at: destination, with: downloadedURL, executable: false)
+        } catch {
+            try? FileManager.default.removeItem(at: downloadedURL)
+            throw error
+        }
+        await emit(.log(L.tr("log.runtime_download_install", destination.path)), to: onEvent)
+        return destination.path
+    }
+
     private static func installModelAssets(
+        baseURL: URL,
         onEvent: (@Sendable (RuntimeInstallerEvent) async -> Void)? = nil
     ) async throws -> String {
         let modelsDirectory = PathResolver.downloadedRuntimeRoot
@@ -72,7 +115,6 @@ enum RuntimeInstaller {
 
         try FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
 
-        let baseURL = HuggingFaceEndpoint.resolved()
         let digestSource = await fetchDigests(baseURL: baseURL, onEvent: onEvent)
         let digests = digestSource.digests
 
@@ -91,6 +133,7 @@ enum RuntimeInstaller {
             onEvent: onEvent
         )
         do {
+            try Task.checkCancellation()
             try replaceItem(at: modelDestination, with: modelDownloadedURL, executable: false)
         } catch {
             try? FileManager.default.removeItem(at: modelDownloadedURL)
@@ -142,10 +185,11 @@ enum RuntimeInstaller {
 
     private static func fetchDigests(
         baseURL: URL,
+        repository: String = HuggingFaceEndpoint.whisperRepository,
         onEvent: (@Sendable (RuntimeInstallerEvent) async -> Void)?
     ) async -> (digests: [String: String], available: Bool) {
         do {
-            let (data, response) = try await URLSession.shared.data(from: HuggingFaceEndpoint.treeAPIURL(baseURL: baseURL))
+            let (data, response) = try await URLSession.shared.data(from: HuggingFaceEndpoint.treeAPIURL(baseURL: baseURL, repository: repository))
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 throw RuntimeInstallerError.invalidDownloadResponse(baseURL.absoluteString)
             }
@@ -239,13 +283,47 @@ enum RuntimeInstaller {
         }
     }
 
-    private static func replaceItem(at destination: URL, with source: URL, executable: Bool) throws {
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
+    static func replaceItem(
+        at destination: URL,
+        with source: URL,
+        executable: Bool,
+        beforeCommit: () throws -> Void = { try checkInstallCancellation() }
+    ) throws {
+        let fileManager = FileManager.default
+        let stagingURL = destination.deletingLastPathComponent()
+            .appending(path: ".whispermac-install-\(UUID().uuidString)")
+        do {
+            try moveOrCopy(source, to: stagingURL)
+            if executable {
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stagingURL.path)
+            }
+            try beforeCommit()
+
+            if fileManager.fileExists(atPath: destination.path) {
+                _ = try fileManager.replaceItemAt(destination, withItemAt: stagingURL)
+            } else {
+                try fileManager.moveItem(at: stagingURL, to: destination)
+            }
+            try? fileManager.removeItem(at: source)
+        } catch {
+            try? fileManager.removeItem(at: stagingURL)
+            throw error
         }
-        try FileManager.default.moveItem(at: source, to: destination)
-        if executable {
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
+    }
+
+    private static func moveOrCopy(_ source: URL, to destination: URL) throws {
+        do {
+            try FileManager.default.moveItem(at: source, to: destination)
+        } catch {
+            guard FileManager.default.fileExists(atPath: source.path) else { throw error }
+            try FileManager.default.copyItem(at: source, to: destination)
+            try? FileManager.default.removeItem(at: source)
+        }
+    }
+
+    private static func checkInstallCancellation() throws {
+        if withUnsafeCurrentTask(body: { $0?.isCancelled ?? false }) {
+            throw CancellationError()
         }
     }
 

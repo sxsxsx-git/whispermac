@@ -54,6 +54,69 @@ struct RuntimeDownloadTests {
     }
 
     @Test
+    func selectableSourcesResolveOfficialMirrorAndCustomEndpoints() throws {
+        #expect(HuggingFaceEndpoint.resolved(source: .official, customValue: nil, environment: [:]) == HuggingFaceEndpoint.defaultBaseURL)
+        #expect(HuggingFaceEndpoint.resolved(source: .hfMirror, customValue: nil, environment: [:]) == HuggingFaceEndpoint.hfMirrorBaseURL)
+        #expect(HuggingFaceEndpoint.resolved(source: .custom, customValue: "https://mirror.example/path", environment: [:])?.absoluteString == "https://mirror.example")
+    }
+
+    @Test
+    func environmentEndpointOverridesTheSelectedSource() {
+        let resolved = HuggingFaceEndpoint.resolved(
+            source: .hfMirror,
+            customValue: "https://custom.example",
+            environment: [HuggingFaceEndpoint.environmentVariableName: "https://env.example:8443/anything"]
+        )
+        #expect(resolved?.absoluteString == "https://env.example:8443")
+    }
+
+    @Test
+    func invalidCustomEndpointIsNotSilentlyReplaced() {
+        #expect(HuggingFaceEndpoint.resolved(source: .custom, customValue: "ftp://example.com", environment: [:]) == nil)
+        #expect(HuggingFaceEndpoint.resolved(source: .custom, customValue: "not a url", environment: [:]) == nil)
+    }
+
+    @Test
+    func sourceBuildsModelVADAndTreeURLsOnBothOfficialAndMirrorHosts() {
+        for base in [HuggingFaceEndpoint.defaultBaseURL, HuggingFaceEndpoint.hfMirrorBaseURL] {
+            let modelURL = HuggingFaceEndpoint.assetURL(fileName: "ggml-large-v3-turbo.bin", baseURL: base)
+            let vadURL = HuggingFaceEndpoint.assetURL(
+                fileName: VADModelResolver.fileName,
+                baseURL: base,
+                repository: "ggml-org/whisper-vad"
+            )
+            let treeURL = HuggingFaceEndpoint.treeAPIURL(baseURL: base, repository: "ggml-org/whisper-vad")
+            #expect(modelURL.host() == base.host())
+            #expect(vadURL.host() == base.host())
+            #expect(treeURL.host() == base.host())
+            #expect(modelURL.absoluteString == "\(base.absoluteString)/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin?download=true")
+            #expect(vadURL.absoluteString == "\(base.absoluteString)/ggml-org/whisper-vad/resolve/main/\(VADModelResolver.fileName)?download=true")
+            #expect(treeURL.absoluteString == "\(base.absoluteString)/api/models/ggml-org/whisper-vad/tree/main?recursive=true")
+        }
+    }
+
+    @MainActor
+    @Test
+    func appModelPersistsDownloadSourceAndMigratesLegacyEndpoint() {
+        let suiteName = "RuntimeDownloadTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("https://hf-mirror.com/", forKey: HuggingFaceEndpoint.storedValueDefaultsKey)
+        let migrated = AppModel(defaults: defaults)
+        #expect(migrated.huggingFaceDownloadSource == .hfMirror)
+        #expect(migrated.resolvedHuggingFaceBaseURL == HuggingFaceEndpoint.hfMirrorBaseURL)
+
+        migrated.huggingFaceDownloadSource = .custom
+        migrated.customHuggingFaceEndpoint = "https://custom.example/path"
+        let restored = AppModel(defaults: defaults)
+        #expect(restored.huggingFaceDownloadSource == .custom)
+        #expect(restored.customHuggingFaceEndpoint == "https://custom.example/path")
+        #expect(restored.resolvedHuggingFaceBaseURL?.absoluteString == "https://custom.example")
+    }
+
+    @Test
     func endpointDerivesAssetAndAPITargetsFromBase() {
         let base = URL(string: "https://hf-mirror.com")!
         let model = HuggingFaceEndpoint.assetURL(fileName: "ggml-large-v3-turbo.bin", baseURL: base)

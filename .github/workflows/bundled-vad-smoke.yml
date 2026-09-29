@@ -1,0 +1,107 @@
+name: Bundled VAD transcription smoke test
+
+on:
+  push:
+    branches:
+      - feat/silero-vad
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bundled-vad-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  packaged-transcription:
+    name: Relocated app CLI · VAD off/on
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      MODEL_CACHE: ${{ github.workspace }}/.cache/whispermac-model-cache
+      MODEL_FILE: ggml-large-v3-turbo.bin
+      ENCODER_ARCHIVE: ggml-large-v3-turbo-encoder.mlmodelc.zip
+      VAD_FILE: ggml-silero-v6.2.0.bin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show runner
+        run: |
+          sw_vers
+          uname -m
+          swift --version
+          cmake --version | head -1
+
+      - name: Restore cached model assets
+        id: models-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/whispermac-model-cache
+          key: whispermac-vad-model-assets-v1-macos-arm64
+
+      - name: Download model assets on cache miss
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$MODEL_CACHE"
+          curl --fail --location --retry 3 \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_FILE?download=true" \
+            --output "$MODEL_CACHE/$MODEL_FILE"
+          curl --fail --location --retry 3 \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$ENCODER_ARCHIVE?download=true" \
+            --output "$MODEL_CACHE/$ENCODER_ARCHIVE"
+          curl --fail --location --retry 3 \
+            "https://huggingface.co/ggml-org/whisper-vad/resolve/main/$VAD_FILE?download=true" \
+            --output "$MODEL_CACHE/$VAD_FILE"
+
+      - name: Verify and extract cached encoder
+        run: |
+          test -s "$MODEL_CACHE/$MODEL_FILE"
+          test -s "$MODEL_CACHE/$ENCODER_ARCHIVE"
+          test -s "$MODEL_CACHE/$VAD_FILE"
+          mkdir -p "$GITHUB_WORKSPACE/Models"
+          cp "$MODEL_CACHE/$MODEL_FILE" "$GITHUB_WORKSPACE/Models/$MODEL_FILE"
+          ditto -x -k "$MODEL_CACHE/$ENCODER_ARCHIVE" "$GITHUB_WORKSPACE/Models"
+          test -d "$GITHUB_WORKSPACE/Models/ggml-large-v3-turbo-encoder.mlmodelc"
+          test -s "$GITHUB_WORKSPACE/Models/$MODEL_FILE"
+
+      - name: Run unit tests
+        run: swift test
+
+      - name: Build pinned whisper.cpp runtime
+        run: ./scripts/setup-whispercpp.sh
+
+      - name: Build WhisperMac.app
+        run: ./scripts/build-app-bundle.sh
+
+      - name: Generate speech fixture and test relocated bundled CLI
+        env:
+          WHISPERMAC_SMOKE_LANGUAGE: en
+          WHISPERMAC_SMOKE_TMPDIR: ${{ runner.temp }}
+        run: |
+          say -o "$RUNNER_TEMP/vad-smoke.aiff" "This is a speech activity detection integration test. The voice pauses briefly, then continues speaking."
+          afconvert -f WAVE -d LEI16@16000 -c 1 \
+            "$RUNNER_TEMP/vad-smoke.aiff" "$RUNNER_TEMP/vad-smoke.wav"
+          ./scripts/test-bundled-vad-transcription.sh \
+            dist/WhisperMac.app \
+            "$MODEL_CACHE/$MODEL_FILE" \
+            "$RUNNER_TEMP/vad-smoke.wav" \
+            "$MODEL_CACHE/$VAD_FILE"
+
+      - name: Upload smoke outputs and runtime logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundled-vad-smoke-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/whispermac-bundled-vad.*/results/*
+            ${{ runner.temp }}/vad-smoke.wav
+          if-no-files-found: warn
+          retention-days: 14

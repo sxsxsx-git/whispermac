@@ -36,6 +36,9 @@ jobs:
           cmake --version | head -1
           swift --version 2>&1 | head -1
 
+      - name: Run tests before building or publishing
+        run: swift test
+
       - name: Detect release mode and version
         id: ver
         run: |

@@ -17,7 +17,10 @@ final class AppModel: ObservableObject {
         didSet { store(outputDirectoryPath, forKey: Keys.outputDirectoryPath) }
     }
     @Published var whisperCLIPath: String {
-        didSet { store(whisperCLIPath, forKey: Keys.whisperCLIPath) }
+        didSet {
+            store(whisperCLIPath, forKey: Keys.whisperCLIPath)
+            refreshVADCLICapability()
+        }
     }
     @Published var modelPath: String {
         didSet { store(modelPath, forKey: Keys.modelPath) }
@@ -34,6 +37,24 @@ final class AppModel: ObservableObject {
     @Published var translatesToEnglish: Bool {
         didSet { store(translatesToEnglish, forKey: Keys.translatesToEnglish) }
     }
+    @Published var vadSettings: VADSettings {
+        didSet {
+            if let data = try? JSONEncoder().encode(vadSettings) {
+                defaults.set(data, forKey: Keys.vadSettings)
+            }
+            if vadSettings.isEnabled { refreshVADCLICapability() }
+        }
+    }
+    @Published var huggingFaceDownloadSource: HuggingFaceDownloadSource {
+        didSet { store(huggingFaceDownloadSource.rawValue, forKey: Keys.huggingFaceDownloadSource) }
+    }
+    @Published var customHuggingFaceEndpoint: String {
+        didSet {
+            if HuggingFaceEndpoint.sanitizedBaseURL(from: customHuggingFaceEndpoint) != nil {
+                defaults.set(customHuggingFaceEndpoint, forKey: Keys.customHuggingFaceEndpoint)
+            }
+        }
+    }
     @Published var logs: [String]
     @Published var isRunning = false
     @Published var isCancelling = false
@@ -44,6 +65,10 @@ final class AppModel: ObservableObject {
     @Published var currentStageDescription = ""
     @Published var currentTranscriptionProgress = 0.0
     @Published var isDownloadingRuntime = false
+    @Published private(set) var isScanningMedia = false
+    @Published private(set) var mediaAdditionFeedback = ""
+    @Published private(set) var vadCLICapability: WhisperCLICapability = .unchecked
+    @Published private(set) var isDownloadingVADModel = false
     @Published var isRuntimeDownloadPromptPresented = false
     @Published var downloadedBytes: Int64 = 0
     @Published var downloadTotalBytes: Int64?
@@ -60,22 +85,51 @@ final class AppModel: ObservableObject {
     @Published private(set) var activePhase: ActiveRunPhase?
     @Published private(set) var activeSnapshot: AppConfigurationSnapshot?
     @Published private(set) var runEffectiveMode: AccelerationMode?
+    @Published private(set) var runCoreMLStatus: CoreMLRuntimeStatus = .notRequested
     @Published private(set) var lastOutcome: TaskOutcome?
     @Published private(set) var lastRunOutputFiles: [URL] = []
     @Published var selectedResultFileID: URL?
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+    private let vadModelSearchRoots: [URL]?
+    private let huggingFaceEnvironment: [String: String]
     private var hasPresentedInitialRuntimePrompt = false
     private var transcriptionTask: Task<Void, Never>?
     private var runtimeDownloadTask: Task<Void, Never>?
+    private var vadDownloadTask: Task<Void, Never>?
+    private var vadCLICheckTask: Task<Void, Never>?
     private var previewLoadGeneration = 0
+    private var mediaScanTask: Task<Void, Never>?
     private lazy var historyStore = TranscriptionHistoryStore()
     private let completionNotifier: CompletionNotifier
+    private let mediaURLExpander: @Sendable ([URL]) async -> [URL]
+    private let vadModelInstaller: @Sendable (
+        URL,
+        (@Sendable (RuntimeInstallerEvent) async -> Void)?
+    ) async throws -> String
     private var keepAwakeToken: KeepAwakeToken?
 
-    init(completionNotifier: CompletionNotifier = CompletionNotifier()) {
+    init(
+        completionNotifier: CompletionNotifier = CompletionNotifier(),
+        defaults: UserDefaults = .standard,
+        vadModelSearchRoots: [URL]? = nil,
+        huggingFaceEnvironment: [String: String]? = nil,
+        mediaURLExpander: @escaping @Sendable ([URL]) async -> [URL] = { urls in
+            await PanelHelper.expandedMediaURLs(from: urls)
+        },
+        vadModelInstaller: @escaping @Sendable (
+            URL,
+            (@Sendable (RuntimeInstallerEvent) async -> Void)?
+        ) async throws -> String = { baseURL, onEvent in
+            try await RuntimeInstaller.installVADModel(baseURL: baseURL, onEvent: onEvent)
+        }
+    ) {
         self.completionNotifier = completionNotifier
-        let defaults = UserDefaults.standard
+        self.defaults = defaults
+        self.vadModelSearchRoots = vadModelSearchRoots
+        self.huggingFaceEnvironment = huggingFaceEnvironment ?? ProcessInfo.processInfo.environment
+        self.mediaURLExpander = mediaURLExpander
+        self.vadModelInstaller = vadModelInstaller
         let guessed = PathResolver.guessDefaults()
         let storedWhisperCLIPath = defaults.string(forKey: Keys.whisperCLIPath) ?? ""
         let resolvedWhisperCLIPath = PathResolver.resolveWhisperCLIPath(storedWhisperCLIPath)
@@ -94,6 +148,22 @@ final class AppModel: ObservableObject {
             selectedFormats = [.txt, .srt]
         }
         let storedSourceLanguage = defaults.string(forKey: Keys.sourceLanguage) ?? WhisperLanguage.autoCode
+        let storedVADSettings = defaults.data(forKey: Keys.vadSettings)
+            .flatMap { try? JSONDecoder().decode(VADSettings.self, from: $0) } ?? .default
+        let storedHFSource = defaults.string(forKey: Keys.huggingFaceDownloadSource)
+            .flatMap(HuggingFaceDownloadSource.init(rawValue:))
+        let legacyHFEndpoint = defaults.string(forKey: HuggingFaceEndpoint.storedValueDefaultsKey)
+        let initialHFSource: HuggingFaceDownloadSource = {
+            if let storedHFSource { return storedHFSource }
+            guard let legacyHFEndpoint else { return .official }
+            guard let normalized = HuggingFaceEndpoint.sanitizedBaseURL(from: legacyHFEndpoint) else { return .custom }
+            if normalized == HuggingFaceEndpoint.hfMirrorBaseURL { return .hfMirror }
+            if normalized == HuggingFaceEndpoint.defaultBaseURL { return .official }
+            return .custom
+        }()
+        let initialCustomHFEndpoint = defaults.string(forKey: Keys.customHuggingFaceEndpoint)
+            ?? (initialHFSource == .custom ? legacyHFEndpoint : nil)
+            ?? ""
         let initialSourceLanguage = WhisperLanguage.isSupported(storedSourceLanguage)
             ? storedSourceLanguage
             : WhisperLanguage.autoCode
@@ -107,6 +177,12 @@ final class AppModel: ObservableObject {
         outputFormats = selectedFormats
         sourceLanguage = initialSourceLanguage
         translatesToEnglish = defaults.bool(forKey: Keys.translatesToEnglish)
+        vadSettings = storedVADSettings
+        huggingFaceDownloadSource = initialHFSource
+        customHuggingFaceEndpoint = initialCustomHFEndpoint
+        if storedHFSource == nil {
+            defaults.set(initialHFSource.rawValue, forKey: Keys.huggingFaceDownloadSource)
+        }
 
         logs = [
             L.tr("log.default_model"),
@@ -119,6 +195,7 @@ final class AppModel: ObservableObject {
         // persisted over the stored setting.
 
         loadHistoryFromStore()
+        refreshVADCLICapability()
     }
 
     var logsText: String {
@@ -126,7 +203,7 @@ final class AppModel: ObservableObject {
     }
 
     var canStart: Bool {
-        startDisabledReason == nil
+        startDisabledReason == nil && !isScanningMedia
     }
 
     /// CLI / model are blockers; a missing Core ML encoder is only an
@@ -147,23 +224,43 @@ final class AppModel: ObservableObject {
         TaskPresentation.mainContent(
             isRunning: isRunning,
             isCancelling: isCancelling,
-            isDownloadingRuntime: isDownloadingRuntime,
+            isDownloadingRuntime: isDownloadingRuntime || isDownloadingVADModel,
             activePhase: activePhase,
             lastOutcome: lastOutcome,
             inputCount: inputFiles.count,
-            blockingRuntimeComponents: blockingRuntimeComponents
+            blockingRuntimeComponents: blockingRuntimeComponents,
+            vadModelMissing: vadSettings.isEnabled && resolvedVADModelPath.isEmpty,
+            vadModelPath: VADModelResolver.downloadedModelURL.path
         )
     }
 
     var startDisabledReason: StartDisabledReason? {
         TaskPresentation.startDisabledReason(
             isRunning: isRunning,
-            isDownloadingRuntime: isDownloadingRuntime,
+            isDownloadingRuntime: isDownloadingRuntime || isDownloadingVADModel,
             inputCount: inputFiles.count,
             hasWhisperCLI: hasResolvableWhisperCLI,
             hasModel: hasResolvableModel,
-            outputFormatCount: outputFormats.count
+            outputFormatCount: outputFormats.count,
+            vadEnabled: vadSettings.isEnabled,
+            hasVADModel: !resolvedVADModelPath.isEmpty,
+            vadCLICapability: vadCLICapability
         )
+    }
+
+    func refreshVADCLICapability() {
+        vadCLICheckTask?.cancel()
+        let path = resolvedWhisperCLIPath
+        guard !path.isEmpty else {
+            vadCLICapability = .unsupported
+            return
+        }
+        vadCLICapability = .checking
+        vadCLICheckTask = Task { [weak self] in
+            let supported = await WhisperCLICapabilityChecker.shared.supportsVAD(at: path)
+            guard !Task.isCancelled, let self, self.resolvedWhisperCLIPath == path else { return }
+            self.vadCLICapability = supported ? .supported : .unsupported
+        }
     }
 
     var downloadProgress: Double? {
@@ -172,7 +269,7 @@ final class AppModel: ObservableObject {
     }
 
     var isBusy: Bool {
-        isRunning || isDownloadingRuntime
+        isRunning || isDownloadingRuntime || isDownloadingVADModel || isScanningMedia
     }
 
     var outputDirectoryDisplayText: String {
@@ -193,6 +290,46 @@ final class AppModel: ObservableObject {
 
     var missingRuntimeComponents: Set<RuntimeComponent> {
         runtimeComponentsMissing(whisperCLIPath: whisperCLIPath, modelPath: modelPath)
+    }
+
+    var resolvedVADModelPath: String {
+        VADModelResolver.resolve(vadSettings.modelPath, searchRoots: vadModelSearchRoots)
+    }
+
+    var hasResolvableVADModel: Bool { !resolvedVADModelPath.isEmpty }
+
+    var hasHuggingFaceEnvironmentOverride: Bool {
+        huggingFaceEnvironment[HuggingFaceEndpoint.environmentVariableName] != nil
+    }
+
+    var resolvedHuggingFaceBaseURL: URL? {
+        HuggingFaceEndpoint.resolved(
+            source: huggingFaceDownloadSource,
+            customValue: customHuggingFaceEndpoint,
+            environment: huggingFaceEnvironment
+        )
+    }
+
+    var isHuggingFaceEndpointInvalid: Bool { resolvedHuggingFaceBaseURL == nil }
+
+    var canDownloadRuntimeAssets: Bool {
+        !isBusy && !isHuggingFaceEndpointInvalid
+    }
+
+    var huggingFaceEndpointDisplayText: String {
+        resolvedHuggingFaceBaseURL?.absoluteString ?? L.tr("hf.endpoint.invalid")
+    }
+
+    /// The path currently used at runtime; automatic discovery remains an overlay
+    /// and is never written back into the user's explicit setting.
+    var vadModelDisplayPath: String {
+        let configuredPath = vadSettings.modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredPath.isEmpty { return PathResolver.expandingTilde(configuredPath) }
+        return resolvedVADModelPath
+    }
+
+    var isVADModelUsingAutomaticPath: Bool {
+        vadSettings.modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var downloadableRuntimeComponents: Set<RuntimeComponent> {
@@ -258,15 +395,42 @@ final class AppModel: ObservableObject {
         // P0.1: a started batch executes a frozen snapshot; adding files mid-run
         // would desync the visible queue from that snapshot, so additions are
         // rejected until the batch ends.
-        guard !isRunning else { return }
-        let additions = PanelHelper.mediaFileAdditions(from: urls, existing: inputFiles)
-        guard !additions.isEmpty else { return }
+        guard !isRunning, !isScanningMedia else { return }
+        guard !urls.isEmpty else { return }
+        isScanningMedia = true
+        mediaAdditionFeedback = L.tr("media.scanning")
+        statusText = L.tr("media.scanning")
+        mediaScanTask = Task { [weak self] in
+            await self?.completeMediaAdditionScan(urls)
+        }
+    }
 
+    /// Awaits the one active scan; also provides a deterministic completion
+    /// point for state-level tests without sleeps or polling.
+    func waitForMediaScan() async {
+        await mediaScanTask?.value
+    }
+
+    private func completeMediaAdditionScan(_ urls: [URL]) async {
+        defer {
+            isScanningMedia = false
+            mediaScanTask = nil
+        }
+        let expanded = await mediaURLExpander(urls)
+        guard !expanded.isEmpty else {
+            mediaAdditionFeedback = L.tr("media.no_supported_files")
+            return
+        }
+        let additions = PanelHelper.mediaFileAdditions(from: expanded, existing: inputFiles)
+        guard !additions.isEmpty else {
+            mediaAdditionFeedback = L.tr("media.no_new_files")
+            return
+        }
         inputFiles.append(contentsOf: additions)
-
         if outputDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             outputDirectoryPath = ""
         }
+        mediaAdditionFeedback = L.tr("media.added_count", additions.count)
     }
 
     func clearInputFiles() {
@@ -307,6 +471,38 @@ final class AppModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         modelPath = url.path
         PathResolver.invalidateCaches()
+    }
+
+    func chooseVADModel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = []
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.nameFieldStringValue = VADModelResolver.fileName
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        vadSettings.modelPath = url.path
+    }
+
+    func restoreAutomaticVADModel() {
+        vadSettings.modelPath = ""
+    }
+
+    func downloadVADModel() {
+        guard !isBusy else { return }
+        guard resolvedHuggingFaceBaseURL != nil else {
+            statusText = L.tr("hf.endpoint.invalid")
+            return
+        }
+        vadDownloadTask = Task { [weak self] in await self?.installVADModel() }
+    }
+
+    func cancelVADModelDownload() {
+        vadDownloadTask?.cancel()
+    }
+
+    func waitForVADDownload() async {
+        await vadDownloadTask?.value
     }
 
     func openOutputDirectory() {
@@ -364,7 +560,11 @@ final class AppModel: ObservableObject {
     }
 
     func startRuntimeDownload() {
-        guard !isDownloadingRuntime else { return }
+        guard !isBusy else { return }
+        guard resolvedHuggingFaceBaseURL != nil else {
+            statusText = L.tr("hf.endpoint.invalid")
+            return
+        }
         let missing = downloadableRuntimeComponents
         guard !missing.isEmpty else { return }
 
@@ -378,6 +578,17 @@ final class AppModel: ObservableObject {
     func cancelRuntimeDownload() {
         guard isDownloadingRuntime else { return }
         runtimeDownloadTask?.cancel()
+    }
+
+    func cancelActiveDownload() {
+        switch TaskPresentation.activeDownload(
+            isDownloadingRuntime: isDownloadingRuntime,
+            isDownloadingVADModel: isDownloadingVADModel
+        ) {
+        case .runtime: cancelRuntimeDownload()
+        case .vadModel: cancelVADModelDownload()
+        case nil: break
+        }
     }
 
     func setFormat(_ format: OutputFormat, enabled: Bool) {
@@ -407,7 +618,12 @@ final class AppModel: ObservableObject {
             accelerationMode: accelerationMode,
             outputFormats: outputFormats,
             sourceLanguage: sourceLanguage,
-            translatesToEnglish: translatesToEnglish
+            translatesToEnglish: translatesToEnglish,
+            vadSettings: {
+                var settings = vadSettings
+                if settings.isEnabled { settings.modelPath = resolvedVADModelPath }
+                return settings
+            }()
         )
 
         // A new batch starts from a clean terminal slate; the previous run's
@@ -420,6 +636,13 @@ final class AppModel: ObservableObject {
         transcriptionTask = Task {
             await runTranscription(snapshot)
         }
+    }
+
+    func retryTranscriptionWithoutVAD() {
+        guard vadSettings.isEnabled, case .noSpeech? = lastOutcome else { return }
+        vadSettings.isEnabled = false
+        dismissOutcome()
+        startTranscription()
     }
 
     /// Leaves the terminal-result view without starting anything (used by
@@ -474,14 +697,22 @@ final class AppModel: ObservableObject {
         currentTranscriptionProgress = 0
         activePhase = .preparingInputs(currentIndex: 0, total: snapshot.inputFiles.count)
         runEffectiveMode = nil
+        runCoreMLStatus = .notRequested
 
         let service = TranscriptionService()
         let modelPlan: RuntimeModelPlan
         var successCount = 0
         var failureCount = 0
         var wasCancelled = false
+        var noSpeechFileNames: [String] = []
 
         do {
+            if snapshot.vadSettings.isEnabled {
+                let vadURL = URL(fileURLWithPath: PathResolver.expandingTilde(snapshot.vadSettings.modelPath))
+                guard VADModelResolver.isValidModel(at: vadURL) else {
+                    throw VADModelResolutionError.missing(vadURL.path)
+                }
+            }
             modelPlan = try RuntimeModelResolver.prepare(
                 modelPath: snapshot.modelPath,
                 requestedMode: snapshot.accelerationMode
@@ -493,11 +724,22 @@ final class AppModel: ObservableObject {
             await finishTranscriptionRun(failureCount: snapshot.inputFiles.count)
             return
         }
-        runEffectiveMode = modelPlan.effectiveMode
+        let awaitsCoreMLConfirmation = snapshot.accelerationMode == .gpuAndANE && modelPlan.coreMLAvailable
+        runCoreMLStatus = awaitsCoreMLConfirmation ? .loading : .notRequested
+        runEffectiveMode = awaitsCoreMLConfirmation ? nil : .pureGPU
 
         appendLog(L.tr("log.start_files", snapshot.inputFiles.count))
         appendLog(L.tr("log.requested_mode", snapshot.accelerationMode.title))
-        appendLog(L.tr("log.effective_mode", modelPlan.effectiveMode.title))
+        appendLog(L.tr("log.expected_mode", modelPlan.effectiveMode.title))
+        appendLog(L.tr("log.vad_enabled", snapshot.vadSettings.isEnabled ? L.tr("log.enabled") : L.tr("log.disabled")))
+        if snapshot.vadSettings.isEnabled {
+            let vadModelName = URL(fileURLWithPath: snapshot.vadSettings.modelPath).lastPathComponent
+            appendLog(L.tr("log.vad_model", vadModelName, snapshot.vadSettings.modelPath))
+            appendLog(L.tr("log.vad_threshold", snapshot.vadSettings.threshold))
+            appendLog(L.tr("log.vad_min_speech", Int64(snapshot.vadSettings.minSpeechDurationMs)))
+            appendLog(L.tr("log.vad_min_silence", Int64(snapshot.vadSettings.minSilenceDurationMs)))
+            appendLog(L.tr("log.vad_speech_pad", Int64(snapshot.vadSettings.speechPadMs)))
+        }
         appendLog(L.tr("log.model_path", modelPlan.originalModelPath))
         if modelPlan.executionModelPath != modelPlan.originalModelPath {
             appendLog(L.tr("log.runtime_model_path", modelPlan.executionModelPath))
@@ -529,6 +771,7 @@ final class AppModel: ObservableObject {
                 formats: snapshot.outputFormats,
                 sourceLanguage: snapshot.sourceLanguage,
                 translatesToEnglish: snapshot.translatesToEnglish,
+                vadSettings: snapshot.vadSettings,
                 onInputStageChange: { [weak self] index, stage in
                     await MainActor.run {
                         guard let self else { return }
@@ -571,6 +814,7 @@ final class AppModel: ObservableObject {
                 },
                 onLog: { [weak self] line in
                     await MainActor.run {
+                        self?.observeRuntimeAccelerationLog(line, expectedCoreML: awaitsCoreMLConfirmation)
                         self?.appendLog(line)
                     }
                 },
@@ -590,7 +834,12 @@ final class AppModel: ObservableObject {
                 }
             )
 
-            successCount = totalFiles
+            let noSpeechInputFiles = snapshot.vadSettings.isEnabled
+                ? reports.indices.filter {
+                    !reports[$0].outputFiles.isEmpty && !reports[$0].containsTranscriptContent
+                }.map { snapshot.inputFiles[$0] }
+                : []
+            successCount = totalFiles - noSpeechInputFiles.count
             if let whisperCommand = reports.first?.whisperCommand {
                 appendLog(L.tr("log.whisper_command", whisperCommand))
             }
@@ -611,7 +860,15 @@ final class AppModel: ObservableObject {
             let outputFiles = reports.flatMap(\.outputFiles)
             lastRunOutputFiles = outputFiles
             selectedResultFileID = outputFiles.first
-            lastOutcome = .succeeded(inputFileCount: totalFiles, outputFiles: outputFiles)
+            if noSpeechInputFiles.isEmpty {
+                lastOutcome = .succeeded(inputFileCount: totalFiles, outputFiles: outputFiles)
+            } else {
+                noSpeechFileNames = noSpeechInputFiles.map(\.lastPathComponent)
+                for fileName in noSpeechFileNames {
+                    appendLog(L.tr("log.vad_no_speech_file", fileName))
+                }
+                lastOutcome = .noSpeech(fileNames: noSpeechFileNames, outputFiles: outputFiles)
+            }
             recordHistoryEntries(
                 reports: reports,
                 inputFiles: snapshot.inputFiles,
@@ -636,6 +893,11 @@ final class AppModel: ObservableObject {
         if wasCancelled {
             statusText = L.tr("status.cancelled")
             currentStageDescription = L.tr("status.cancelled")
+        } else if !noSpeechFileNames.isEmpty {
+            statusText = L.tr("result.no_speech.bar", noSpeechFileNames.count)
+            currentStageDescription = L.tr("result.no_speech.title")
+            currentFileProgress = 1
+            overallProgress = 1
         } else {
             statusText = L.tr("log.completed_summary", successCount, failureCount)
             currentStageDescription = failureCount == 0 ? L.tr("stage.all_done") : L.tr("stage.processing_finished")
@@ -647,6 +909,20 @@ final class AppModel: ObservableObject {
             failureCount: failureCount,
             wasCancelled: wasCancelled
         )
+    }
+
+    private func observeRuntimeAccelerationLog(_ line: String, expectedCoreML: Bool) {
+        guard expectedCoreML, let signal = RuntimeAccelerationSignal.parse(line) else { return }
+        switch signal {
+        case .coreMLLoaded:
+            runCoreMLStatus = .loaded
+            runEffectiveMode = .gpuAndANE
+            appendLog(L.tr("log.coreml_runtime_loaded"))
+        case .coreMLFailed:
+            runCoreMLStatus = .failed
+            runEffectiveMode = .pureGPU
+            appendLog(L.tr("log.coreml_runtime_failed"))
+        }
     }
 
     private func installPreviewFiles(from reports: [TranscriptionReport], inputs: [BatchTranscriptionInput]) {
@@ -815,7 +1091,8 @@ final class AppModel: ObservableObject {
         appendLog(L.tr("log.runtime_download_start"))
 
         do {
-            let result = try await RuntimeInstaller.install(missing: missing) { [weak self] event in
+            guard let baseURL = resolvedHuggingFaceBaseURL else { throw HuggingFaceDownloadError.invalidEndpoint }
+            let result = try await RuntimeInstaller.install(missing: missing, baseURL: baseURL) { [weak self] event in
                 await MainActor.run {
                     guard let self else { return }
                     switch event {
@@ -849,6 +1126,40 @@ final class AppModel: ObservableObject {
 
         isDownloadingRuntime = false
         runtimeDownloadTask = nil
+    }
+
+    private func installVADModel() async {
+        isDownloadingVADModel = true
+        downloadedBytes = 0
+        downloadTotalBytes = nil
+        statusText = L.tr("status.runtime_preparing_download")
+        do {
+            guard let baseURL = resolvedHuggingFaceBaseURL else { throw HuggingFaceDownloadError.invalidEndpoint }
+            let path = try await vadModelInstaller(baseURL) { [weak self] event in
+                await MainActor.run {
+                    guard let self else { return }
+                    switch event {
+                    case .status(let status): self.statusText = status
+                    case .log(let line): self.logs.append(line)
+                    case .progress(let bytes, let total):
+                        self.downloadedBytes = bytes
+                        self.downloadTotalBytes = total
+                    }
+                }
+            }
+            vadSettings.modelPath = ""
+            guard !resolvedVADModelPath.isEmpty else {
+                throw VADModelResolutionError.missing(path)
+            }
+            statusText = L.tr("status.runtime_ready")
+        } catch is CancellationError {
+            statusText = L.tr("status.download_cancelled")
+        } catch {
+            logs.append(error.localizedDescription)
+            statusText = L.tr("status.runtime_download_failed")
+        }
+        isDownloadingVADModel = false
+        vadDownloadTask = nil
     }
 
     private func appendLog(_ line: String) {
@@ -912,4 +1223,12 @@ private enum Keys {
     static let outputFormats = "outputFormats"
     static let sourceLanguage = "sourceLanguage"
     static let translatesToEnglish = "translatesToEnglish"
+    static let vadSettings = "vadSettings"
+    static let huggingFaceDownloadSource = "huggingFaceDownloadSource"
+    static let customHuggingFaceEndpoint = "customHuggingFaceEndpoint"
+}
+
+private enum HuggingFaceDownloadError: LocalizedError {
+    case invalidEndpoint
+    var errorDescription: String? { L.tr("hf.endpoint.invalid") }
 }

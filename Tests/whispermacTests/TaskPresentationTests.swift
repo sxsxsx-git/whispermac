@@ -7,6 +7,81 @@ import Testing
 /// batch transcription, cancelling, and the three terminal outcomes without
 /// inventing per-file progress or treating 100% as success.
 struct TaskPresentationTests {
+    @MainActor
+    @Test
+    func downloadAvailabilityTracksSelectedSourceAndEnvironmentOverride() {
+        var suiteNames: [String] = []
+        defer { suiteNames.forEach { UserDefaults(suiteName: $0)?.removePersistentDomain(forName: $0) } }
+
+        func makeModel(
+            source: HuggingFaceDownloadSource,
+            customEndpoint: String = "",
+            environment: [String: String] = [:]
+        ) -> AppModel {
+            let suiteName = "DownloadAvailability-\(UUID().uuidString)"
+            suiteNames.append(suiteName)
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defaults.set(source.rawValue, forKey: "huggingFaceDownloadSource")
+            defaults.set(customEndpoint, forKey: "customHuggingFaceEndpoint")
+            return AppModel(defaults: defaults, huggingFaceEnvironment: environment)
+        }
+
+        #expect(makeModel(source: .official).canDownloadRuntimeAssets)
+        #expect(makeModel(source: .hfMirror).canDownloadRuntimeAssets)
+        #expect(makeModel(source: .custom, customEndpoint: "https://mirror.example").canDownloadRuntimeAssets)
+        #expect(!makeModel(source: .custom, customEndpoint: "ftp://invalid.example").canDownloadRuntimeAssets)
+        #expect(makeModel(
+            source: .custom,
+            customEndpoint: "ftp://invalid.example",
+            environment: [HuggingFaceEndpoint.environmentVariableName: "https://override.example"]
+        ).canDownloadRuntimeAssets)
+        #expect(!makeModel(
+            source: .official,
+            environment: [HuggingFaceEndpoint.environmentVariableName: "ftp://invalid.example"]
+        ).canDownloadRuntimeAssets)
+    }
+
+    @Test
+    func activeDownloadCancellationRoutesToActualDownloadKind() {
+        #expect(TaskPresentation.activeDownload(isDownloadingRuntime: false, isDownloadingVADModel: true) == .vadModel)
+        #expect(TaskPresentation.activeDownload(isDownloadingRuntime: true, isDownloadingVADModel: false) == .runtime)
+        #expect(TaskPresentation.activeDownload(isDownloadingRuntime: false, isDownloadingVADModel: false) == nil)
+    }
+
+    @Test
+    func enabledVADBlocksUntilSelectedCLIIsVerifiedCompatible() {
+        let common: (WhisperCLICapability) -> StartDisabledReason? = { capability in
+            TaskPresentation.startDisabledReason(
+                isRunning: false,
+                isDownloadingRuntime: false,
+                inputCount: 1,
+                hasWhisperCLI: true,
+                hasModel: true,
+                outputFormatCount: 1,
+                vadEnabled: true,
+                hasVADModel: true,
+                vadCLICapability: capability
+            )
+        }
+        #expect(common(.checking) == .checkingVADCLI)
+        #expect(common(.unsupported) == .unsupportedVADCLI)
+        #expect(common(.supported) == nil)
+    }
+
+    @Test
+    func vadOffDoesNotDependOnCLICapabilityCheck() {
+        #expect(TaskPresentation.startDisabledReason(
+            isRunning: false,
+            isDownloadingRuntime: false,
+            inputCount: 1,
+            hasWhisperCLI: true,
+            hasModel: true,
+            outputFormatCount: 1,
+            vadEnabled: false,
+            vadCLICapability: .unsupported
+        ) == nil)
+    }
+
 
     private static let noBlockers: Set<RuntimeComponent> = []
     private static let cliMissing: Set<RuntimeComponent> = [.whisperCLI]
@@ -26,6 +101,22 @@ struct TaskPresentationTests {
             blockingRuntimeComponents: Self.noBlockers
         )
         #expect(state == .setup(.emptyQueue))
+    }
+
+    @Test
+    func enabledVADWithMissingModelHasDedicatedReadiness() {
+        let state = TaskPresentation.mainContent(
+            isRunning: false,
+            isCancelling: false,
+            isDownloadingRuntime: false,
+            activePhase: nil,
+            lastOutcome: nil,
+            inputCount: 1,
+            blockingRuntimeComponents: [],
+            vadModelMissing: true,
+            vadModelPath: "/runtime/Models/ggml-silero-v6.2.0.bin"
+        )
+        #expect(state == .setup(.missingVADModel(path: "/runtime/Models/ggml-silero-v6.2.0.bin")))
     }
 
     @Test
@@ -215,6 +306,21 @@ struct TaskPresentationTests {
             blockingRuntimeComponents: Self.noBlockers
         )
         #expect(state == .finished(.cancelled))
+    }
+
+    @Test
+    func noSpeechOutcomeRemainsDistinctFromSuccessAndFailure() {
+        let outcome = TaskOutcome.noSpeech(fileNames: ["quiet-lecture.m4a"], outputFiles: [])
+        let state = TaskPresentation.mainContent(
+            isRunning: false,
+            isCancelling: false,
+            isDownloadingRuntime: false,
+            activePhase: nil,
+            lastOutcome: outcome,
+            inputCount: 1,
+            blockingRuntimeComponents: Self.noBlockers
+        )
+        #expect(state == .finished(outcome))
     }
 
     // MARK: start disabled reasons

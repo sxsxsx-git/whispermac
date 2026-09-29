@@ -32,30 +32,76 @@ enum ShellCommandError: LocalizedError {
     }
 }
 
-private final class OutputCollector: @unchecked Sendable {
+final class OutputCollector: @unchecked Sendable {
+    static let maximumBufferedLineBytes = 1_048_576
+
+    private struct LineBuffer {
+        var bytes = [UInt8]()
+        var droppingLongLine = false
+        var skipLeadingLineFeed = false
+
+        mutating func append(_ data: Data) -> [String] {
+            var lines: [String] = []
+            for byte in data {
+                if skipLeadingLineFeed {
+                    skipLeadingLineFeed = false
+                    if byte == 0x0A { continue }
+                }
+
+                if byte == 0x0A || byte == 0x0D {
+                    if !droppingLongLine { appendDecodedLine(to: &lines) }
+                    bytes.removeAll(keepingCapacity: true)
+                    droppingLongLine = false
+                    skipLeadingLineFeed = byte == 0x0D
+                    continue
+                }
+
+                guard !droppingLongLine else { continue }
+                bytes.append(byte)
+                if bytes.count > OutputCollector.maximumBufferedLineBytes {
+                    bytes.removeAll(keepingCapacity: true)
+                    droppingLongLine = true
+                }
+            }
+            return lines
+        }
+
+        mutating func flush() -> String? {
+            guard !droppingLongLine else {
+                bytes.removeAll(keepingCapacity: false)
+                droppingLongLine = false
+                return nil
+            }
+            var lines: [String] = []
+            appendDecodedLine(to: &lines)
+            bytes.removeAll(keepingCapacity: false)
+            return lines.first
+        }
+
+        private mutating func appendDecodedLine(to lines: inout [String]) {
+            let line = String(decoding: bytes, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !line.isEmpty { lines.append(line) }
+        }
+    }
+
     private let queue = DispatchQueue(label: "whispermac.shell-output")
     private var stdoutData = Data()
     private var stderrData = Data()
-    private var stdoutBuffer = ""
-    private var stderrBuffer = ""
+    private var stdoutBuffer = LineBuffer()
+    private var stderrBuffer = LineBuffer()
 
     func appendLines(_ data: Data, to stream: ShellOutputStream) -> [String] {
         guard !data.isEmpty else { return [] }
 
         return queue.sync {
-            let chunk = String(decoding: data, as: UTF8.self)
-                .replacingOccurrences(of: "\r\n", with: "\n")
-                .replacingOccurrences(of: "\r", with: "\n")
-
             switch stream {
             case .stdout:
                 stdoutData.append(data)
-                stdoutBuffer.append(chunk)
-                return extractLines(from: &stdoutBuffer)
+                return stdoutBuffer.append(data)
             case .stderr:
                 stderrData.append(data)
-                stderrBuffer.append(chunk)
-                return extractLines(from: &stderrBuffer)
+                return stderrBuffer.append(data)
             }
         }
     }
@@ -64,18 +110,8 @@ private final class OutputCollector: @unchecked Sendable {
         queue.sync {
             var pending: [(ShellOutputStream, String)] = []
 
-            let stdoutTail = stdoutBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !stdoutTail.isEmpty {
-                pending.append((.stdout, stdoutTail))
-            }
-
-            let stderrTail = stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !stderrTail.isEmpty {
-                pending.append((.stderr, stderrTail))
-            }
-
-            stdoutBuffer.removeAll(keepingCapacity: false)
-            stderrBuffer.removeAll(keepingCapacity: false)
+            if let stdoutTail = stdoutBuffer.flush() { pending.append((.stdout, stdoutTail)) }
+            if let stderrTail = stderrBuffer.flush() { pending.append((.stderr, stderrTail)) }
 
             return pending
         }
@@ -87,20 +123,6 @@ private final class OutputCollector: @unchecked Sendable {
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
             return (stdout, stderr)
         }
-    }
-
-    private func extractLines(from buffer: inout String) -> [String] {
-        var lines: [String] = []
-
-        while let newlineRange = buffer.range(of: "\n") {
-            let line = String(buffer[..<newlineRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !line.isEmpty {
-                lines.append(line)
-            }
-            buffer.removeSubrange(buffer.startIndex..<newlineRange.upperBound)
-        }
-
-        return lines
     }
 }
 

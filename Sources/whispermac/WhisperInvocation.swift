@@ -7,7 +7,8 @@ enum WhisperInvocation {
         outputPrefixes: [String],
         formats: Set<OutputFormat>,
         sourceLanguage: String = WhisperLanguage.autoCode,
-        translatesToEnglish: Bool = false
+        translatesToEnglish: Bool = false,
+        vadSettings: VADSettings = .default
     ) -> [String] {
         precondition(
             wavPaths.count == outputPrefixes.count,
@@ -23,6 +24,16 @@ enum WhisperInvocation {
             arguments += ["--translate"]
         }
         arguments += formats.sorted { $0.rawValue < $1.rawValue }.map(\.whisperArgument)
+        if vadSettings.isEnabled {
+            arguments += [
+                "--vad",
+                "-vm", PathResolver.expandingTilde(vadSettings.modelPath),
+                "-vt", String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), vadSettings.threshold),
+                "-vspd", String(vadSettings.minSpeechDurationMs),
+                "-vsd", String(vadSettings.minSilenceDurationMs),
+                "-vp", String(vadSettings.speechPadMs),
+            ]
+        }
         return arguments
     }
 }

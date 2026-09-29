@@ -20,6 +20,16 @@ WhisperMac expects the `large-v3-turbo` model assets generated from the
 OpenAI Whisper release ecosystem and may optionally bundle a Core ML encoder
 compiled from those assets for local inference.
 
+## Silero VAD model
+
+- Converted model: `ggml-silero-v6.2.0.bin`
+- Model repository: [`ggml-org/whisper-vad`](https://huggingface.co/ggml-org/whisper-vad)
+- Original project: [`snakers4/silero-vad`](https://github.com/snakers4/silero-vad)
+- License: MIT (as identified by the model repository and the Silero VAD source repository)
+
+WhisperMac downloads this model on request; it is not bundled in the app-only
+release archive. The model is converted to ggml format for use by `whisper.cpp`.
+
 ## macOS system audio conversion
 
 WhisperMac uses the macOS built-in `afconvert` tool for audio extraction and

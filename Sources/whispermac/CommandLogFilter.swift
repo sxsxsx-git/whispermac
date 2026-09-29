@@ -1,7 +1,11 @@
 import Foundation
 
 enum CommandLogFilter {
-    static func filteredLine(for stream: ShellOutputStream, tool: CommandLogTool, line: String) -> String? {
+    static func filteredLine(
+        for stream: ShellOutputStream,
+        tool: CommandLogTool,
+        line: String
+    ) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -32,6 +36,8 @@ enum CommandLogFilter {
             "whisper_backend_init",
             "whisper_backend_init_gpu:",
             "whisper_print_progress_callback:",
+            "vad_model_load",
+            "vad_init",
             "ggml_metal_init:",
             "ggml_metal_device_init: GPU name:",
             "ggml_metal_device_init: found device:",
@@ -54,9 +60,32 @@ enum CommandLogFilter {
             "flash attn",
             "devices    =",
             "backends   =",
+            "vad model",
+            "vad_model",
+            "VAD version",
+            "vad version",
+            "VAD model",
+            "speech segments",
+            "speech duration",
+            "audio reduction",
+            "reduced audio",
+            "samples after VAD",
         ]
 
         if usefulPrefixes.contains(where: { line.hasPrefix($0) }) || usefulFragments.contains(where: { line.contains($0) }) {
+            return line
+        }
+
+        let vadSummaryPrefixes = [
+            "whisper_vad_init_from_file_with_params: loading VAD model",
+            "whisper_vad_init_with_params: model type:",
+            "whisper_vad_init_with_params: model version:",
+            "whisper_vad_segments_from_probs: Final speech segments after filtering:",
+            "whisper_vad_detect_speech_no_reset: vad time =",
+        ]
+        let vadSummaryFragments = ["Reduced audio from", "reduced audio from", "audio reduction"]
+        if vadSummaryPrefixes.contains(where: { line.hasPrefix($0) }) ||
+            vadSummaryFragments.contains(where: { line.contains($0) }) {
             return line
         }
 

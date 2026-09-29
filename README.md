@@ -44,17 +44,19 @@ assemble a `whisper.cpp` CLI workflow by hand. WhisperMac is the third path — 
 - 🖥️ **A real Mac app** — SwiftUI interface with a batch queue, live transcript, and history, not a thin terminal wrapper
 - ⚡ **Apple Silicon aware** — explicit `GPU (Metal)` and `GPU + ANE (Core ML)` runtime modes with honest reporting of which one is actually in effect
 - 📦 **One-click runtime setup** — download the default model and Core ML encoder from inside the app, with checksum verification
+- 🎙️ **Optional Silero VAD** — detect speech before transcription to skip long silent sections; disabled by default
 - 🌐 **Localized UI** — English, 简体中文, 日本語
 
 ## 🎯 Features
 
 | | Feature | Details |
 | --- | --- | --- |
-| 🗂 | **Batch queue** | Drag in MP4 / MOV / M4V / M4A / MP3 / WAV / AAC / FLAC, deduplicated, removable before start |
+| 🗂 | **Batch queue** | Drag media files or folders; folders are recursively scanned for supported formats, then deduplicated and removable before start |
 | 📄 | **Export formats** | `TXT` · `SRT` · `VTT` · `JSON` — pick any combination per task |
 | 🏠 | **Sensible outputs** | By default each transcript lands next to its source file; or choose one shared output folder |
 | ⚡ | **Acceleration modes** | `GPU only` (Metal) or `GPU + ANE` (Metal + Core ML encoder); missing encoder falls back to GPU with a notice |
-| 📥 | **Built-in runtime download** | Downloads `ggml-large-v3-turbo` and its encoder archive from Hugging Face with SHA-256 verification, progress, and cancel |
+| 📥 | **Built-in runtime download** | Downloads `ggml-large-v3-turbo`, its encoder archive, and optional VAD model; choose official Hugging Face, HF-Mirror, or a custom endpoint |
+| 🎙️ | **Silero voice activity detection** | Optional CPU-based speech detection with adjustable threshold, duration and padding; download the 864 KB model in Settings |
 | 📡 | **Live transcript** | Segments stream in while whisper works, with a follow-latest toggle |
 | 👀 | **SRT preview** | Read the resulting subtitles in-app right after a batch finishes |
 | 🕘 | **History** | The last 100 successful batches, one click to reveal in Finder |
@@ -125,15 +127,27 @@ media files ──▶ afconvert (16 kHz mono WAV) ──▶ whisper-cli ──�
 
 1. WhisperMac converts every input to 16 kHz mono PCM WAV using the macOS
    built-in `afconvert` — no FFmpeg dependency.
-2. The whole batch runs through one `whisper.cpp` invocation on your machine.
-3. On Apple Silicon, `GPU only` uses the Metal backend; `GPU + ANE` adds a
-   Core ML encoder when a matching `ggml-large-v3-turbo-encoder.mlmodelc` is
-   available.
+2. When enabled, Silero VAD runs on the CPU and selects speech regions before
+   Whisper processes them. The default threshold is `0.50`, minimum speech is
+   `250 ms`, minimum silence is `500 ms`, and speech padding is `200 ms`.
+3. `whisper.cpp` transcribes those regions. Its Metal GPU and optional Core ML
+   encoder continue to work as configured; VAD's CPU execution does not disable
+   either acceleration mode.
 
 > [!NOTE]
 > ANE does not accelerate the full pipeline in current `whisper.cpp`: the Core
 > ML path accelerates the **encoder**, while decoding still uses GPU/CPU.
 > WhisperMac always reports the mode actually in effect.
+
+VAD can reduce work on recordings with long silences, but may miss quiet speech
+or singing. It detects activity only: it does not separate speakers from music,
+create semantic sentence breaks, or use an LLM to correct subtitles. See the
+[VAD setup and CLI example](docs/installation.md#silero-vad).
+
+Drop a folder onto the workspace to recursively add supported media from its
+subfolders. Download source selection and custom Hugging Face endpoints are in
+**Settings → Model Downloads**; `WHISPERMAC_HF_ENDPOINT` overrides the UI
+selection when set.
 
 ## 📸 Interface
 

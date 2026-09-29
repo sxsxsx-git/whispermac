@@ -24,10 +24,24 @@ resources.
 
 No. WhisperMac uses macOS built-in `afconvert` for audio preprocessing.
 
-## Does the app include model download UI?
+## Does the app download models?
 
-Not yet. You currently prepare the model outside the app and then point
-WhisperMac to the local model file.
+Yes. The app can download the default Whisper model and Core ML encoder. The
+optional Silero VAD model has its own download action and does not trigger a
+Whisper model or encoder download. You can also select local model files in
+Settings.
+
+## What does Silero VAD do?
+
+It detects speech regions before Whisper transcribes them, which can save work
+on audio with long silences. It is disabled by default. Its defaults are
+threshold `0.50`, minimum speech `250 ms`, minimum silence `500 ms`, and
+padding `200 ms`. Since detection can miss quiet speech or singing, compare
+with VAD off when completeness is important. VAD does not separate vocals from
+music, create semantic sentence breaks, or correct subtitles with an LLM.
+
+VAD runs on the CPU; this does not prevent Whisper from using Metal or its
+optional Core ML encoder. The run log reports the effective acceleration mode.
 
 ## Do release downloads include the model files?
 
@@ -36,7 +50,7 @@ No in the current packaging flow. The release asset is app-only and strips the
 
 ## What output formats are supported?
 
-`txt` and `srt`.
+`txt`, `srt`, `vtt`, and `json`.
 
 ## What is the difference between `GPU only` and `GPU + ANE`?
 

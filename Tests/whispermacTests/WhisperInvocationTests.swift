@@ -187,6 +187,44 @@ func exactArgumentOrderForTwoFileBatch() {
 }
 
 @Test
+func disabledVADPreservesExactLegacyArguments() {
+    let arguments = WhisperInvocation.arguments(
+        modelPath: "/models/ggml.bin",
+        wavPaths: ["/tmp/a.wav"],
+        outputPrefixes: ["/out/a"],
+        formats: [.txt]
+    )
+    #expect(arguments == ["-m", "/models/ggml.bin", "-f", "/tmp/a.wav", "-of", "/out/a", "-l", "auto", "-pp", "-otxt"])
+}
+
+@Test
+func enabledVADAppendsAllSettingsInDeterministicOrder() throws {
+    let arguments = WhisperInvocation.arguments(
+        modelPath: "/models/ggml.bin",
+        wavPaths: ["/tmp/a.wav", "/tmp/b.wav"],
+        outputPrefixes: ["/out/a", "/out/b"],
+        formats: [.txt, .srt],
+        sourceLanguage: "zh",
+        translatesToEnglish: true,
+        vadSettings: VADSettings(
+            isEnabled: true,
+            modelPath: "~/Models/custom-vad.bin",
+            threshold: 0.65,
+            minSpeechDurationMs: 300,
+            minSilenceDurationMs: 700,
+            speechPadMs: 150
+        )
+    )
+    let vadIndex = try #require(arguments.firstIndex(of: "--vad"))
+    #expect(arguments[vadIndex...] == [
+        "--vad", "-vm", PathResolver.expandingTilde("~/Models/custom-vad.bin"),
+        "-vt", "0.65", "-vspd", "300", "-vsd", "700", "-vp", "150",
+    ])
+    #expect(arguments[arguments.firstIndex(of: "-f")! + 1] == "/tmp/a.wav")
+    #expect(arguments.filter { $0 == "-of" }.count == 2)
+}
+
+@Test
 func legacyPersistedFormatRawValuesDecodeUnchanged() {
     let decoded = Set(["srt", "txt"].compactMap(OutputFormat.init(rawValue:)))
 
