@@ -135,6 +135,8 @@ media files ──▶ afconvert (16 kHz mono WAV) ──▶ whisper-cli ──�
 > ML path accelerates the **encoder**, while decoding still uses GPU/CPU.
 > WhisperMac always reports the mode actually in effect.
 
+The Previous-text context toggle under Adjust Options → Transcription is saved between launches. It is off by default, using `--max-context 0` to prevent incorrect text from feeding back into subsequent audio windows and causing long repetition loops. This can reduce wording consistency across windows. Each batch saves commands, raw output, and exit results under `~/Library/Logs/WhisperMac/`. These local logs include transcript text and can be deleted manually.
+
 ## 📸 Interface
 
 | Ready (中文) | Running | Complete (日本語) |
