@@ -280,6 +280,7 @@ struct SetupWorkspaceView: View {
                 defaultsRow(L.tr("label.output_directory"), outputLocationDisplayText(model.outputDirectoryPath))
                 defaultsRow(L.tr("label.export_formats"), formatsSummaryText(model.outputFormats))
                 defaultsRow(L.tr("label.audio_language"), languageDisplayName(forCode: model.sourceLanguage))
+                defaultsRow(L.tr("text_context.title"), model.usesTextContext ? L.tr("common.on") : L.tr("common.off"))
             }
         }
     }
@@ -308,6 +309,7 @@ struct SetupWorkspaceView: View {
                 SectionHeader(title: L.tr("options.section.transcribe"))
                 languageRow
                 translateRow
+                textContextRow
             }
 
             Divider()
@@ -401,6 +403,18 @@ struct SetupWorkspaceView: View {
             .labelsHidden()
             .frame(minWidth: 200, idealWidth: 240, maxWidth: 360, alignment: .leading)
             .disabled(model.isBusy)
+        }
+    }
+
+    private var textContextRow: some View {
+        LabeledRow(title: L.tr("text_context.title")) {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(L.tr("text_context.enable"), isOn: $model.usesTextContext)
+                    .disabled(model.isBusy)
+                Text(L.tr("text_context.hint"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -730,6 +744,7 @@ struct RunWorkspaceView: View {
             VStack(alignment: .leading, spacing: 8) {
                 snapshotRow(L.tr("label.output_directory"), outputLocationDisplayText(snapshot.outputDirectoryPath))
                 snapshotRow(L.tr("label.audio_language"), languageDisplayName(forCode: snapshot.sourceLanguage))
+                snapshotRow(L.tr("text_context.title"), snapshot.usesTextContext ? L.tr("common.on") : L.tr("common.off"))
                 snapshotRow(
                     L.tr("toggle.translate_to_english"),
                     snapshot.translatesToEnglish ? L.tr("common.on") : L.tr("common.off")

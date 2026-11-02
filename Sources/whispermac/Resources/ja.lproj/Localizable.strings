@@ -226,3 +226,10 @@
 "history.empty" = "成功した記録はまだありません。";
 "privacy.download" = "ダウンロードは実行環境の取得のみが目的で、文字起こしはこの Mac 上で行われます。";
 "options.translate" = "翻訳";
+
+"log.diagnostic_file" = "診断ログ：%@";
+"log.diagnostic_unavailable" = "診断ログを作成できませんでした。文字起こしは続行します。";
+"text_context.title" = "前の区間のテキスト";
+"text_context.enable" = "前の区間の認識結果を参照";
+"text_context.hint" = "区間間の用語の一貫性を改善できますが、誤認識が繰り返される場合があります。初期設定はオフです。長い録音で繰り返しが発生する場合はオフにしてください。";
+"log.text_context" = "前の区間のテキスト：%@";

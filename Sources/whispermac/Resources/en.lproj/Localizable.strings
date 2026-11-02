@@ -226,3 +226,10 @@
 "history.empty" = "No successful batches yet.";
 "privacy.download" = "The download only fetches runtime assets; transcription stays on this Mac.";
 "options.translate" = "Translate";
+
+"log.diagnostic_file" = "Diagnostic log: %@";
+"log.diagnostic_unavailable" = "Could not create diagnostic log; transcription will continue.";
+"text_context.title" = "Previous-text context";
+"text_context.enable" = "Use text from the previous audio window";
+"text_context.hint" = "May improve wording consistency across windows, but recognition errors can propagate into repetition loops. Off by default; keep off if long recordings repeat.";
+"log.text_context" = "Previous-text context: %@";

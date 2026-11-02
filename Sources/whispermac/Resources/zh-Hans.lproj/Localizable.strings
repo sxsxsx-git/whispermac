@@ -226,3 +226,10 @@
 "history.empty" = "还没有成功记录。";
 "privacy.download" = "下载仅用于获取运行资源，转写仍在本机完成。";
 "options.translate" = "翻译";
+
+"log.diagnostic_file" = "诊断日志：%@";
+"log.diagnostic_unavailable" = "无法创建诊断日志，将继续转写。";
+"text_context.title" = "跨窗口文字上下文";
+"text_context.enable" = "引用前一段识别文本";
+"text_context.hint" = "开启后可改善前后用词一致性，但误识别可能在后续片段中反复传播。默认关闭；长录音出现重复时建议关闭。";
+"log.text_context" = "跨窗口文字上下文：%@";
